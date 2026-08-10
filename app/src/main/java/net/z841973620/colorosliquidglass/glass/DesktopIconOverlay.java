@@ -124,8 +124,21 @@ final class DesktopIconOverlay {
             paintDelegatedFolderPreviews(anchor, canvas, globalToTarget, region);
         }
         View skipHost = findDragView(glassHost) != null ? glassHost : null;
-        int painted = paintDesktopInto(anchor, canvas, globalToTarget, region, skipHost,
-                skipIcons, null, popup);
+        int painted;
+        // In-folder options menu: sample open Folder icons with FastBitmap (never whole-Folder
+        // rasterize, never per-icon menu composite — clearAppSnaps every settle frame = jank).
+        View openFolder = popup ? findOpenFolderView(anchor) : null;
+        if (popup && openFolder != null && isFolderCurrentlyOpen(openFolder)) {
+            collectOpenFolderDesktopSkips(anchor, openFolder, skipIcons);
+            painted = paintOpenFolderIconsInto(openFolder, canvas, globalToTarget, region,
+                    skipHost, skipIcons, false);
+            if (paintOpenFolderTitleInto(openFolder, canvas, globalToTarget)) {
+                painted++;
+            }
+        } else {
+            painted = paintDesktopInto(anchor, canvas, globalToTarget, region, skipHost,
+                    skipIcons, null, popup);
+        }
         boolean underPopup = false;
         if (popup) {
             paintDragViewsInto(root, canvas, globalToTarget, region);
@@ -2223,47 +2236,8 @@ final class DesktopIconOverlay {
         int painted = 0;
         List<ViewGroup> containers = iconContainersUnderRegion(seed, region);
         for (ViewGroup icons : containers) {
-            for (int i = 0; i < icons.getChildCount(); i++) {
-                View child = icons.getChildAt(i);
-                if (child == null || child.getVisibility() != View.VISIBLE) continue;
-                // Do not skip low-alpha icons: ColorOS dims the workspace during create-folder /
-                // folder accept; those icons must still appear in float-menu glass.
-                if (child.getWidth() <= 0 || child.getHeight() <= 0) continue;
-                if (!intersectsRegion(region, child)) continue;
-                View host = resolveDesktopItem(child);
-                if (host == null) continue;
-                if (skipHost != null && isDragSourceOrSelf(skipHost, host)) continue;
-                if (skipIcons != null && (skipIcons.contains(host) || skipIcons.contains(child)
-                        || isListedDragSource(host, child, skipIcons))) {
-                    continue;
-                }
-                // Drop-into-open-folder: omit workspace icons under the folder page (overlap).
-                // Cover is null once the folder closes or the drag ends → icons restore.
-                if (openFolderCover != null
-                        && (iconCoveredByFolderDrop(openFolderCover, child)
-                        || iconCoveredByFolderDrop(openFolderCover, host))) {
-                    continue;
-                }
-                try {
-                    if (isFolderIcon(host) || isFolderIcon(child)) {
-                        paintFolderIntoSample(isFolderIcon(host) ? host : child,
-                                canvas, globalToTarget, menuGlass);
-                        painted++;
-                    } else if (isWidgetOrCard(host) || isWidgetOrCard(child)) {
-                        paintWidget(isWidgetOrCard(host) ? host : child,
-                                canvas, globalToTarget);
-                        painted++;
-                    } else if (menuGlass && paintAppMenuComposite(child, host, canvas,
-                            globalToTarget)) {
-                        painted++;
-                    } else {
-                        paintAppIcon(host, canvas, globalToTarget);
-                        paintAppLabel(host, canvas, globalToTarget);
-                        painted++;
-                    }
-                } catch (Throwable ignored) {
-                }
-            }
+            painted += paintIconContainerInto(icons, canvas, globalToTarget, region, skipHost,
+                    skipIcons, openFolderCover, menuGlass);
         }
 
         View workspace = findWorkspaceAncestor(seed);
@@ -2277,6 +2251,178 @@ final class DesktopIconOverlay {
                 paintDesktopChrome(pageIndicator, canvas, globalToTarget);
                 painted++;
             } catch (Throwable ignored) { }
+        }
+        return painted;
+    }
+
+    /**
+     * Paint apps inside an open {@code Folder} with FastBitmap + labels (same as idle desktop
+     * icons). Do <b>not</b> pass {@code menuGlass=true}: options-menu composite snaps are
+     * cleared every settle frame and re-rasterizing every folder icon janks badly.
+     */
+    private static int paintOpenFolderIconsInto(View openFolder, Canvas canvas,
+            Matrix globalToTarget, RectF region, View skipHost,
+            java.util.HashSet<View> skipIcons, boolean menuGlass) {
+        if (openFolder == null || region == null) return 0;
+        ViewGroup icons = openFolderCurrentIconContainer(openFolder);
+        if (icons != null) {
+            return paintIconContainerInto(icons, canvas, globalToTarget, region, skipHost,
+                    skipIcons, null, menuGlass);
+        }
+        View content = folderContentView(openFolder);
+        if (!(content instanceof ViewGroup)) return 0;
+        // Fallback: only the current page when getCurrentCellLayout is unavailable.
+        ViewGroup pages = (ViewGroup) content;
+        int painted = 0;
+        Object cur = invokeNoArgs(content, "getCurrentPage");
+        int pageIndex = cur instanceof Number ? ((Number) cur).intValue() : -1;
+        if (pageIndex >= 0 && pageIndex < pages.getChildCount()) {
+            ViewGroup pageIcons = shortcutsAndWidgetsOf(pages.getChildAt(pageIndex));
+            if (pageIcons != null) {
+                return paintIconContainerInto(pageIcons, canvas, globalToTarget, region,
+                        skipHost, skipIcons, null, menuGlass);
+            }
+        }
+        for (int i = 0; i < pages.getChildCount(); i++) {
+            ViewGroup pageIcons = shortcutsAndWidgetsOf(pages.getChildAt(i));
+            if (pageIcons == null) continue;
+            painted += paintIconContainerInto(pageIcons, canvas, globalToTarget, region,
+                    skipHost, skipIcons, null, menuGlass);
+        }
+        return painted;
+    }
+
+    /** Current-page {@code ShortcutAndWidgetContainer} inside an open Folder. */
+    private static ViewGroup openFolderCurrentIconContainer(View openFolder) {
+        View content = folderContentView(openFolder);
+        if (content == null) return shortcutsAndWidgetsOf(openFolder);
+        Object cell = invokeNoArgs(content, "getCurrentCellLayout");
+        if (cell instanceof View) {
+            ViewGroup icons = shortcutsAndWidgetsOf((View) cell);
+            if (icons != null) return icons;
+        }
+        Object cur = invokeNoArgs(content, "getCurrentPage");
+        if (cur instanceof Number) {
+            try {
+                Object page = content.getClass().getMethod("getPageAt", int.class)
+                        .invoke(content, ((Number) cur).intValue());
+                if (page instanceof View) {
+                    ViewGroup icons = shortcutsAndWidgetsOf((View) page);
+                    if (icons != null) return icons;
+                }
+            } catch (Throwable ignored) { }
+        }
+        return shortcutsAndWidgetsOf(content);
+    }
+
+    /**
+     * Draw open-folder header title ({@code R.id.folder_name} / {@code mFolderName}) into the
+     * menu sample with canvas text only — no View.draw, no setAlpha, no Folder-page rasterize.
+     */
+    private static boolean paintOpenFolderTitleInto(View openFolder, Canvas canvas,
+            Matrix globalToTarget) {
+        TextView name = openFolderTitleView(openFolder);
+        if (name == null || name.getVisibility() != View.VISIBLE) return false;
+        if (name.getWidth() <= 0 || name.getHeight() <= 0) return false;
+        CharSequence text = name.getText();
+        boolean fromHint = false;
+        if (TextUtils.isEmpty(text)) {
+            text = name.getHint();
+            fromHint = true;
+        }
+        if (TextUtils.isEmpty(text)) return false;
+        Matrix itemToGlobal = new Matrix();
+        name.transformMatrixToGlobal(itemToGlobal);
+        Matrix itemToHost = new Matrix();
+        itemToHost.setConcat(globalToTarget, itemToGlobal);
+        int save = canvas.save();
+        canvas.concat(itemToHost);
+        try {
+            TITLE_PAINT.set(name.getPaint());
+            int color = fromHint ? name.getCurrentHintTextColor() : name.getCurrentTextColor();
+            if (color == 0) color = name.getCurrentTextColor();
+            TITLE_PAINT.setColor(color);
+            TITLE_PAINT.setAlpha(255);
+            TITLE_PAINT.setTextAlign(Paint.Align.CENTER);
+            float x = name.getWidth() * 0.5f;
+            float y = name.getBaseline();
+            if (y <= 0f) {
+                Paint.FontMetrics fm = TITLE_PAINT.getFontMetrics();
+                y = (name.getHeight() - fm.ascent - fm.descent) * 0.5f;
+            }
+            canvas.drawText(text.toString(), x, y, TITLE_PAINT);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            canvas.restoreToCount(save);
+        }
+    }
+
+    private static TextView openFolderTitleView(View openFolder) {
+        if (openFolder == null) return null;
+        TextView fromField = folderNameView(openFolder);
+        if (fromField != null) return fromField;
+        try {
+            String pkg = openFolder.getContext().getPackageName();
+            int id = openFolder.getResources().getIdentifier("folder_name", "id", pkg);
+            if (id == 0) {
+                id = openFolder.getResources().getIdentifier(
+                        "folder_name", "id", "com.android.launcher");
+            }
+            if (id != 0) {
+                View found = openFolder.findViewById(id);
+                if (found instanceof TextView) return (TextView) found;
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
+    private static int paintIconContainerInto(ViewGroup icons, Canvas canvas,
+            Matrix globalToTarget, RectF region, View skipHost,
+            java.util.HashSet<View> skipIcons, RectF openFolderCover, boolean menuGlass) {
+        if (icons == null) return 0;
+        int painted = 0;
+        for (int i = 0; i < icons.getChildCount(); i++) {
+            View child = icons.getChildAt(i);
+            if (child == null || child.getVisibility() != View.VISIBLE) continue;
+            // Do not skip low-alpha icons: ColorOS dims the workspace during create-folder /
+            // folder accept; those icons must still appear in float-menu glass.
+            if (child.getWidth() <= 0 || child.getHeight() <= 0) continue;
+            if (!intersectsRegion(region, child)) continue;
+            View host = resolveDesktopItem(child);
+            if (host == null) continue;
+            if (skipHost != null && isDragSourceOrSelf(skipHost, host)) continue;
+            if (skipIcons != null && (skipIcons.contains(host) || skipIcons.contains(child)
+                    || isListedDragSource(host, child, skipIcons))) {
+                continue;
+            }
+            // Drop-into-open-folder: omit workspace icons under the folder page (overlap).
+            // Cover is null once the folder closes or the drag ends → icons restore.
+            if (openFolderCover != null
+                    && (iconCoveredByFolderDrop(openFolderCover, child)
+                    || iconCoveredByFolderDrop(openFolderCover, host))) {
+                continue;
+            }
+            try {
+                if (isFolderIcon(host) || isFolderIcon(child)) {
+                    paintFolderIntoSample(isFolderIcon(host) ? host : child,
+                            canvas, globalToTarget, menuGlass);
+                    painted++;
+                } else if (isWidgetOrCard(host) || isWidgetOrCard(child)) {
+                    paintWidget(isWidgetOrCard(host) ? host : child,
+                            canvas, globalToTarget);
+                    painted++;
+                } else if (menuGlass && paintAppMenuComposite(child, host, canvas,
+                        globalToTarget)) {
+                    painted++;
+                } else {
+                    paintAppIcon(host, canvas, globalToTarget);
+                    paintAppLabel(host, canvas, globalToTarget);
+                    painted++;
+                }
+            } catch (Throwable ignored) {
+            }
         }
         return painted;
     }

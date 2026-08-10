@@ -14,6 +14,7 @@ import android.view.ViewTreeObserver;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -32,6 +33,12 @@ import java.util.WeakHashMap;
             View.OnAttachStateChangeListener {
     private static final Map<View, BackdropCapture> CAPTURES = new WeakHashMap<>();
     private static final Map<View, WeakReference<View>> OVERLAY_SOURCES = new WeakHashMap<>();
+    /**
+     * Wallpaper-only hosts → sample which wallpaper ({@link WallpaperManager#FLAG_SYSTEM} or
+     * {@link WallpaperManager#FLAG_LOCK}). Presence means skip hierarchy {@code root.draw}.
+     */
+    private static final Map<View, Integer> WALLPAPER_ONLY =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     static BackdropCapture register(View target) {
         synchronized (CAPTURES) {
@@ -198,6 +205,17 @@ import java.util.WeakHashMap;
             capture.rootRef = new WeakReference<>(root);
         }
         if (capture.recording) return;
+        // Lock affordance / RapidReaction: wallpaper is static — skip re-bake when we already
+        // hold a meaningful frame at the current host size (OEM hooks spam apply often).
+        if (isWallpaperOnlyGlass(target)
+                && capture.validFrame
+                && capture.frontBitmap != null
+                && !capture.frontBitmap.isRecycled()
+                && capture.frontBitmap.getWidth() == target.getWidth()
+                && capture.frontBitmap.getHeight() == target.getHeight()
+                && capture.isMeaningful(capture.frontBitmap)) {
+            return;
+        }
         capture.dirty = true;
         capture.capture(root, target, true);
     }
@@ -480,12 +498,15 @@ import java.util.WeakHashMap;
             }
         }
 
+        boolean wallpaperOnly = isWallpaperOnlyGlass(target);
         boolean wallpaperAnimating = WallpaperScaleTracker.isAnimating();
         boolean underDrag = dragViewAncestor(target) != null;
         // Recents task-menu glass: the app is paused when the menu opens, so the behind-menu
         // pixels never change on their own — resample only on geometry change, never because the
         // wallpaper is still animating (that re-renders the protect mask every frame).
-        if (taskGlass) {
+        // Lock-screen affordance / RapidReaction: static wallpaper drawable sample — do not
+        // chase desktop WallpaperScaleTracker (that caused lock-screen jank).
+        if (taskGlass || wallpaperOnly) {
             wallpaperAnimating = false;
         }
         boolean moving = geometryChanged || underDrag || wallpaperAnimating
@@ -527,11 +548,8 @@ import java.util.WeakHashMap;
         int h = target.getHeight();
         float hierarchyScale = cumulativeScale(owner);
         float rootScale = Math.abs(root.getScaleX() * root.getScaleY());
-        float wallpaperDepth = readWallpaperDepth(root);
         float hierarchyAlpha = cumulativeAlpha(owner);
         float rootAlpha = root.getAlpha();
-        float wallpaperScale = WallpaperScaleTracker.current();
-        int[] workspaceScroll = readWorkspaceScroll(owner, root);
         int visibleW = 0;
         int visibleH = 0;
         if (owner.getGlobalVisibleRect(visibleScratch)) {
@@ -539,17 +557,16 @@ import java.util.WeakHashMap;
             visibleH = visibleScratch.height();
         }
 
+        boolean wallpaperOnly = isWallpaperOnlyGlass(target);
+        // Wallpaper-only plates (lock affordance / RapidReaction) only care about host
+        // size/position/alpha — not desktop wallpaper depth/scale or workspace scroll.
         boolean changed = w != lastTargetW || h != lastTargetH
                 || locationScratch[0] != lastWindowX || locationScratch[1] != lastWindowY
                 || visibleW != lastVisibleW || visibleH != lastVisibleH
                 || scaleChanged(hierarchyScale, lastHierarchyScale)
                 || scaleChanged(rootScale, lastRootScale)
-                || scaleChanged(wallpaperDepth, lastWallpaperDepth)
                 || scaleChanged(hierarchyAlpha, lastHierarchyAlpha)
-                || scaleChanged(rootAlpha, lastRootAlpha)
-                || scaleChanged(wallpaperScale, lastWallpaperScale)
-                || workspaceScroll[0] != lastWorkspaceScrollX
-                || workspaceScroll[1] != lastWorkspaceScrollY;
+                || scaleChanged(rootAlpha, lastRootAlpha);
         lastTargetW = w;
         lastTargetH = h;
         lastWindowX = locationScratch[0];
@@ -558,12 +575,22 @@ import java.util.WeakHashMap;
         lastVisibleH = visibleH;
         lastHierarchyScale = hierarchyScale;
         lastRootScale = rootScale;
-        lastWallpaperDepth = wallpaperDepth;
         lastHierarchyAlpha = hierarchyAlpha;
         lastRootAlpha = rootAlpha;
-        lastWallpaperScale = wallpaperScale;
-        lastWorkspaceScrollX = workspaceScroll[0];
-        lastWorkspaceScrollY = workspaceScroll[1];
+        if (!wallpaperOnly) {
+            float wallpaperDepth = readWallpaperDepth(root);
+            float wallpaperScale = WallpaperScaleTracker.current();
+            int[] workspaceScroll = readWorkspaceScroll(owner, root);
+            changed = changed
+                    || scaleChanged(wallpaperDepth, lastWallpaperDepth)
+                    || scaleChanged(wallpaperScale, lastWallpaperScale)
+                    || workspaceScroll[0] != lastWorkspaceScrollX
+                    || workspaceScroll[1] != lastWorkspaceScrollY;
+            lastWallpaperDepth = wallpaperDepth;
+            lastWallpaperScale = wallpaperScale;
+            lastWorkspaceScrollX = workspaceScroll[0];
+            lastWorkspaceScrollY = workspaceScroll[1];
+        }
         return changed;
     }
 
@@ -735,7 +762,7 @@ import java.util.WeakHashMap;
                     translateRootToTarget(root, target, canvas);
                 }
                 try {
-                    drawWallpaper(root, canvas);
+                    drawWallpaper(root, canvas, target);
                 } catch (Throwable ignored) {
                 }
                 canvas.restore();
@@ -769,7 +796,7 @@ import java.util.WeakHashMap;
                             translateRootToTarget(root, target, canvas);
                         }
                         try {
-                            drawWallpaper(root, canvas);
+                            drawWallpaper(root, canvas, target);
                         } catch (Throwable ignored) {
                         }
                         canvas.restore();
@@ -799,7 +826,7 @@ import java.util.WeakHashMap;
                 }
             } else if (taskGlass) {
                 translateRootToTarget(root, target, canvas);
-                drawWallpaper(root, canvas);
+                            drawWallpaper(root, canvas, target);
                 // Wallpaper already sampled above. Blit task thumbnail / protect mask only —
                 // never software-draw the full launcher tree (severe frame drops).
                 canvas.restore();
@@ -812,7 +839,7 @@ import java.util.WeakHashMap;
                 canvas.restore();
             } else if (BehindDisplayCapture.isSysUiMenuGlass(target)) {
                 translateRootToTarget(root, target, canvas);
-                drawWallpaper(root, canvas);
+                            drawWallpaper(root, canvas, target);
                 // Float/split app-options: sample composited content under the popup
                 // (exclude popup SurfaceControl) — not wallpaper alone.
                 canvas.restore();
@@ -821,20 +848,20 @@ import java.util.WeakHashMap;
                 try {
                     if (!BehindDisplayCapture.paintIntoTargetLocal(target, canvas)) {
                         // Fallback if capture is denied — still show wallpaper plate.
-                        drawWallpaper(root, canvas);
+                        drawWallpaper(root, canvas, target);
                     }
                 } catch (Throwable ignored) {
-                    try { drawWallpaper(root, canvas); } catch (Throwable ignored2) { }
+                    try { drawWallpaper(root, canvas, target); } catch (Throwable ignored2) { }
                 }
                 canvas.restore();
             } else if (isWallpaperOnlyGlass(target)) {
                 translateRootToTarget(root, target, canvas);
-                drawWallpaper(root, canvas);
+                            drawWallpaper(root, canvas, target);
                 // RapidReaction capsules sit under the live app: desktop/wallpaper only.
                 canvas.restore();
             } else {
                 translateRootToTarget(root, target, canvas);
-                drawWallpaper(root, canvas);
+                            drawWallpaper(root, canvas, target);
                 View dragView = dragViewAncestor(target);
                 float oldDragAlpha = dragView == null ? 1f : dragView.getAlpha();
                 owner.setAlpha(0f);
@@ -1003,9 +1030,9 @@ import java.util.WeakHashMap;
         backBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     }
 
-    private static void drawWallpaper(View root, Canvas canvas) {
+    private static void drawWallpaper(View root, Canvas canvas, View target) {
         try {
-            Drawable wallpaper = WallpaperManager.getInstance(root.getContext()).getDrawable();
+            Drawable wallpaper = resolveWallpaperDrawable(root.getContext(), target);
             if (wallpaper == null) return;
             Rect old = wallpaper.copyBounds();
             int sourceWidth = Math.max(1, wallpaper.getIntrinsicWidth());
@@ -1018,8 +1045,11 @@ import java.util.WeakHashMap;
             int left = (width - drawWidth) / 2;
             int top = (height - drawHeight) / 2;
             wallpaper.setBounds(left, top, left + drawWidth, top + drawHeight);
-            // System wallpaper zoom lives on another surface; mirror its center-scale here.
-            float zoom = WallpaperScaleTracker.current();
+            // Desktop wallpaper zoom lives on another surface; mirror it for launcher glass.
+            // Lock affordance / RapidReaction wallpaper-only plates stay 1:1 — chasing
+            // WallpaperScaleTracker forced a redraw every zoom frame on the lock screen.
+            boolean lockOrStatic = isWallpaperOnlyGlass(target);
+            float zoom = lockOrStatic ? 1f : WallpaperScaleTracker.current();
             int save = canvas.save();
             if (Math.abs(zoom - 1f) > 0.0005f) {
                 canvas.scale(zoom, zoom, width * 0.5f, height * 0.5f);
@@ -1030,18 +1060,109 @@ import java.util.WeakHashMap;
         } catch (Throwable ignored) { }
     }
 
-    private static View rootOf(View target) {
-        View root = target.getRootView();
-        return root == null ? target : root;
+    private static Drawable resolveWallpaperDrawable(android.content.Context context, View target) {
+        WallpaperManager wm = WallpaperManager.getInstance(context);
+        if (wantsLockWallpaper(target)) {
+            Drawable lock = peekOplusLockWallpaper(context);
+            if (lock != null) return lock;
+            try {
+                java.lang.reflect.Method getDrawable =
+                        WallpaperManager.class.getMethod("getDrawable", int.class);
+                Object d = getDrawable.invoke(wm, WallpaperManager.FLAG_LOCK);
+                if (d instanceof Drawable) return (Drawable) d;
+            } catch (Throwable ignored) { }
+        }
+        try {
+            return wm.getDrawable();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** Cached ColorOS lock wallpaper; reflection is expensive and lock art rarely changes mid-session. */
+    private static Drawable cachedOplusLockWallpaper;
+    private static long cachedOplusLockWallpaperAtMs;
+    private static final long OPLUS_LOCK_WALLPAPER_CACHE_MS = 5_000L;
+
+    /**
+     * ColorOS lock wallpaper (static / pictorial / engine) via SystemUI DependencyEx —
+     * more accurate than {@link WallpaperManager#FLAG_LOCK} alone.
+     */
+    private static Drawable peekOplusLockWallpaper(android.content.Context context) {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (cachedOplusLockWallpaper != null
+                && now - cachedOplusLockWallpaperAtMs < OPLUS_LOCK_WALLPAPER_CACHE_MS) {
+            return cachedOplusLockWallpaper;
+        }
+        try {
+            ClassLoader cl = context.getClassLoader();
+            Class<?> depExClass = Class.forName("com.android.systemui.DependencyEx", false, cl);
+            java.lang.reflect.Field sDep = depExClass.getDeclaredField("sDependency");
+            sDep.setAccessible(true);
+            Object depEx = sDep.get(null);
+            if (depEx == null) return null;
+            Class<?> kgdClass = Class.forName(
+                    "com.android.keyguard.OplusKeyguardDependencyEx", false, cl);
+            Object kgd = depExClass.getMethod("getDependency", Class.class)
+                    .invoke(depEx, kgdClass);
+            if (kgd == null) return null;
+            Object controller = kgd.getClass()
+                    .getMethod("getOplusLockScreenWallpaperController")
+                    .invoke(kgd);
+            if (controller == null) return null;
+            Object drawable = controller.getClass().getMethod("getDrawable").invoke(controller);
+            if (drawable instanceof Drawable) {
+                cachedOplusLockWallpaper = (Drawable) drawable;
+                cachedOplusLockWallpaperAtMs = now;
+                return cachedOplusLockWallpaper;
+            }
+            return null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     /**
-     * Wallpaper-only hosts: RapidReaction capsules ({@code colg_rapid_*}).
+     * Mark a glass host to sample wallpaper only (skip hierarchy {@code root.draw}).
+     * Prefer this over {@code View.setTag} when the OEM already uses the unkeyed tag
+     * (e.g. Cos16 keyguard affordance Animatable2 resource id).
+     */
+    static void markWallpaperOnly(View target) {
+        markWallpaperOnly(target, WallpaperManager.FLAG_SYSTEM);
+    }
+
+    /** Sample the lock-screen wallpaper (not home/desktop). */
+    static void markLockWallpaperOnly(View target) {
+        markWallpaperOnly(target, WallpaperManager.FLAG_LOCK);
+    }
+
+    static void markWallpaperOnly(View target, int which) {
+        if (target == null) return;
+        WALLPAPER_ONLY.put(target, which == WallpaperManager.FLAG_LOCK
+                ? WallpaperManager.FLAG_LOCK
+                : WallpaperManager.FLAG_SYSTEM);
+    }
+
+    private static boolean wantsLockWallpaper(View target) {
+        if (target == null) return false;
+        Integer which = WALLPAPER_ONLY.get(target);
+        return which != null && which == WallpaperManager.FLAG_LOCK;
+    }
+
+    /**
+     * Wallpaper-only hosts: RapidReaction capsules ({@code colg_rapid_*}), or
+     * explicitly marked views (lock-screen affordances use lock wallpaper).
      * SystemUI float/split menus use {@link BehindDisplayCapture} instead.
      */
     private static boolean isWallpaperOnlyGlass(View target) {
+        if (target != null && WALLPAPER_ONLY.containsKey(target)) return true;
         Object tag = target == null ? null : target.getTag();
         return tag instanceof String && ((String) tag).startsWith("colg_rapid_");
+    }
+
+    private static View rootOf(View target) {
+        View root = target.getRootView();
+        return root == null ? target : root;
     }
 
     /** Desktop long-press options menu panels ({@code colg_desktop_popup}). */

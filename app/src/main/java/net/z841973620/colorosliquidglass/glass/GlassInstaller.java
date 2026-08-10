@@ -73,6 +73,16 @@ public final class GlassInstaller {
         BackdropCapture.setOverlaySource(target, overlay);
     }
 
+    /** Sample wallpaper only — for SystemUI keyguard affordances (no keyguard root.draw). */
+    public static void markWallpaperOnly(View view) {
+        BackdropCapture.markWallpaperOnly(view);
+    }
+
+    /** Sample lock-screen wallpaper (not home/desktop) for keyguard affordance glass. */
+    public static void markLockWallpaperOnly(View view) {
+        BackdropCapture.markLockWallpaperOnly(view);
+    }
+
     /** Clear all drag overlay seeds and folder raster caches after finger-up. */
     public static void clearDragOverlays() {
         BackdropCapture.clearAllOverlaySources();
