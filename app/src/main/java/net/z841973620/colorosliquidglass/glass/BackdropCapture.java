@@ -287,6 +287,12 @@ import java.util.WeakHashMap;
     /** Desktop options-menu has published a frame that includes desktop icons. */
     private boolean desktopPopupHasIcons;
     /**
+     * After open anim settles, clear {@link DesktopIconOverlay} app snaps <b>once</b> so
+     * 角标 refresh — clearing every settle frame forced per-icon re-raster and janked
+     * in-folder menus (same composite path as desktop options glass).
+     */
+    private boolean desktopPopupAppSnapsClearedForSettle;
+    /**
      * True from options-menu open-animator attach until onAnimationEnd.
      * Mid-release stops DragView invalidates; a Choreographer callback must keep sampling
      * because onPreDraw often early-returns (low alpha / skipCapture) without re-arming.
@@ -324,6 +330,10 @@ import java.util.WeakHashMap;
             capture.dirty = true;
             capture.desktopPopupSettling = true;
             capture.skipCaptureFromSelfInvalidate = false;
+            if (animating) {
+                // New open: allow one post-settle snap clear for fresh 角标.
+                capture.desktopPopupAppSnapsClearedForSettle = false;
+            }
         }
         if (animating) {
             // Open-anim priority: capture immediately so mid-release cannot freeze first.
@@ -770,11 +780,15 @@ import java.util.WeakHashMap;
                 canvas.scale(scale, scale);
                 boolean iconsPainted = false;
                 try {
-                    // Fully open: drop APP_SNAPS so 角标 refresh. During open, keep snaps —
-                    // mid-release HW re-snap often fails and would refuse to publish (= freeze
-                    // that overrides continuous open-anim sampling).
-                    if (desktopPopupGlass && !isDesktopPopupOpening(target)) {
-                        DesktopIconOverlay.clearAppSnaps();
+                    // After open settles, clear APP_SNAPS once so 角标 refresh — not every
+                    // settle frame (that re-rasterized every icon under in-folder menus).
+                    if (desktopPopupGlass) {
+                        if (isDesktopPopupOpening(target)) {
+                            desktopPopupAppSnapsClearedForSettle = false;
+                        } else if (!desktopPopupAppSnapsClearedForSettle) {
+                            DesktopIconOverlay.clearAppSnaps();
+                            desktopPopupAppSnapsClearedForSettle = true;
+                        }
                     }
                     iconsPainted = DesktopIconOverlay.paintIntoTargetLocal(target, canvas);
                 } catch (Throwable ignored) {
@@ -803,7 +817,7 @@ import java.util.WeakHashMap;
                         canvas.save();
                         canvas.scale(scale, scale);
                         try {
-                            DesktopIconOverlay.clearAppSnaps();
+                            // Snaps already cleared once above when settled; do not wipe again.
                             iconsPainted = DesktopIconOverlay.paintIntoTargetLocal(target, canvas);
                         } catch (Throwable ignored) {
                         }
@@ -1252,6 +1266,7 @@ import java.util.WeakHashMap;
         validFrame = false;
         desktopPopupSettling = false;
         desktopPopupHasIcons = false;
+        desktopPopupAppSnapsClearedForSettle = false;
         desktopPopupOpenAnimActive = false;
         desktopPopupPumpPosted = false;
         try {

@@ -198,6 +198,9 @@ public final class GlassDrawable extends Drawable {
         // View.drawBackground may reset bounds to the full view after setBackground.
         // COUI submenu open grows RoundFrameLayout.f15656b — re-apply before sampling.
         applyCouiRevealBoundsIfPresent();
+        // Lock-screen capsule: OEM blur is clipped to pathProvider clipRect (pill size).
+        // CapsuleBackgroundView itself stays notification-row sized during list→capsule.
+        applyCapsuleClipBoundsIfPresent();
         Rect bounds = getBounds();
         if (bounds.isEmpty()) return;
         int save = canvas.save();
@@ -324,6 +327,105 @@ public final class GlassDrawable extends Drawable {
                 return;
             }
         } catch (Throwable ignored) { }
+    }
+
+    /**
+     * ColorOS 16 lock-screen capsule: {@code CapsuleBackgroundHelper} draws OEM blur only
+     * inside {@code AutoRoundRectPathProvider.getClipRect()}. During 通知列表→胶囊 the host
+     * view stays list-row sized; without this the glass plate fills that large rect.
+     */
+    private void applyCapsuleClipBoundsIfPresent() {
+        if (owner == null) return;
+        String ownerName = owner.getClass().getName();
+        if (ownerName == null
+                || !ownerName.endsWith(".CapsuleBackgroundView")) {
+            return;
+        }
+        Rect clip = readCapsuleClipRect(owner);
+        if (clip == null || clip.isEmpty()) return;
+        int vw = owner.getWidth();
+        int vh = owner.getHeight();
+        if (vw > 0 && vh > 0) {
+            clip.left = Math.max(0, Math.min(clip.left, vw));
+            clip.top = Math.max(0, Math.min(clip.top, vh));
+            clip.right = Math.max(clip.left, Math.min(clip.right, vw));
+            clip.bottom = Math.max(clip.top, Math.min(clip.bottom, vh));
+        }
+        if (clip.width() < 2 || clip.height() < 2) return;
+        float pill = Math.min(clip.width(), clip.height()) * 0.5f;
+        if (pill > 0f) {
+            setCornerRadii(pill, pill, pill, pill);
+        }
+        Rect cur = getBounds();
+        if (cur.left == clip.left && cur.top == clip.top
+                && cur.right == clip.right && cur.bottom == clip.bottom) {
+            return;
+        }
+        setBounds(clip);
+    }
+
+    private static Rect readCapsuleClipRect(View bg) {
+        try {
+            Object helper = invokeNoArg(bg, "getCapsuleHelper");
+            Object pathProvider = fieldOf(helper, "pathProvider");
+            if (pathProvider != null) {
+                Object clip = invokeNoArg(pathProvider, "getClipRect");
+                if (clip instanceof Rect && !((Rect) clip).isEmpty()) {
+                    return new Rect((Rect) clip);
+                }
+                Object meta = fieldOf(pathProvider, "pathMetaData");
+                Object rectF = meta != null ? invokeNoArg(meta, "getClipRect") : null;
+                if (rectF instanceof RectF) {
+                    RectF rf = (RectF) rectF;
+                    if (rf.width() >= 2f && rf.height() >= 2f) {
+                        Rect out = new Rect();
+                        rf.roundOut(out);
+                        return out;
+                    }
+                }
+            }
+        } catch (Throwable ignored) { }
+        try {
+            for (View current = bg; current != null; ) {
+                if (current.getClass().getName() != null
+                        && current.getClass().getName().endsWith(".CapsuleItemView")) {
+                    Object location = fieldOf(current, "location");
+                    Object clip = invokeNoArg(location, "getClipRect");
+                    if (clip instanceof Rect && !((Rect) clip).isEmpty()) {
+                        return new Rect((Rect) clip);
+                    }
+                    break;
+                }
+                Object parent = current.getParent();
+                if (!(parent instanceof View)) break;
+                current = (View) parent;
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
+    private static Object fieldOf(Object target, String name) {
+        if (target == null || name == null) return null;
+        for (Class<?> c = target.getClass(); c != null; c = c.getSuperclass()) {
+            try {
+                java.lang.reflect.Field f = c.getDeclaredField(name);
+                f.setAccessible(true);
+                return f.get(target);
+            } catch (Throwable ignored) { }
+        }
+        return null;
+    }
+
+    private static Object invokeNoArg(Object target, String name) {
+        if (target == null || name == null) return null;
+        for (Class<?> c = target.getClass(); c != null; c = c.getSuperclass()) {
+            try {
+                java.lang.reflect.Method m = c.getDeclaredMethod(name);
+                m.setAccessible(true);
+                return m.invoke(target);
+            } catch (Throwable ignored) { }
+        }
+        return null;
     }
 
     private float[] clampedRadii(Rect bounds) {

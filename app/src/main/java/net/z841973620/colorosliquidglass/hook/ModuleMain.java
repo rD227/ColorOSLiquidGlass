@@ -130,6 +130,7 @@ public final class ModuleMain extends XposedModule {
                 legacyBackend.hookSystemUi(this, cl, remotePreferences);
             } else {
                 hookKeyguardAffordanceGlass(cl);
+                hookLockScreenCapsuleGlass(cl);
             }
             return;
         }
@@ -2352,6 +2353,192 @@ public final class ModuleMain extends XposedModule {
             if (id != 0) return view.getResources().getDimension(id);
         } catch (Throwable ignored) { }
         return 12f * view.getResources().getDisplayMetrics().density;
+    }
+
+    /**
+     * ColorOS 16 lock-screen notification <b>capsule</b> style only
+     * ({@code CapsuleBackgroundView}). Do not touch notification-list / stack rows, and never
+     * route through {@link Os14HookBackend}.
+     * <p>
+     * OEM paints material blur in {@code CapsuleBackgroundHelper.drawCapsuleBg}; skip that once
+     * LiquidGlass is installed as the view background and sample lock wallpaper only.
+     */
+    private void hookLockScreenCapsuleGlass(ClassLoader cl) {
+        final String bgClass =
+                "com.oplus.systemui.notification.lockscreen.capsule.CapsuleBackgroundView";
+        if (!hasClass(cl, bgClass)) {
+            log(4, TAG, "hookLockScreenCapsuleGlass skipped (no CapsuleBackgroundView)");
+            return;
+        }
+        log(4, TAG, "hookLockScreenCapsuleGlass Cos16");
+        after(bgClass, cl, "onAttachedToWindow", this::applyLockScreenCapsuleGlass);
+        after(bgClass, cl, "onLayout", this::applyLockScreenCapsuleGlass);
+        try {
+            Class<?> helper = Class.forName(
+                    "com.oplus.systemui.notification.lockscreen.capsule.CapsuleBackgroundHelper",
+                    false, cl);
+            for (Method m : helper.getDeclaredMethods()) {
+                if (!"drawCapsuleBg".equals(m.getName()) || m.isBridge() || m.isSynthetic()) {
+                    continue;
+                }
+                Class<?>[] params = m.getParameterTypes();
+                if (params.length != 2 || !View.class.isAssignableFrom(params[0])) continue;
+                hookOnce(m, chain -> {
+                    try {
+                        java.util.List<Object> args = chain.getArgs();
+                        if (args != null && !args.isEmpty() && args.get(0) instanceof View
+                                && GlassInstaller.get((View) args.get(0)) != null) {
+                            // Glass is already the background — skip OEM blur / solid fill.
+                            return null;
+                        }
+                    } catch (Throwable ignored) { }
+                    return chain.proceed();
+                });
+            }
+        } catch (Throwable e) {
+            log(5, TAG, "CapsuleBackgroundHelper.drawCapsuleBg hook unavailable", e);
+        }
+    }
+
+    private void applyLockScreenCapsuleGlass(Object bgObj) {
+        if (!enabled() || !(bgObj instanceof View)) return;
+        final View bg = (View) bgObj;
+        if (!isClassOrSubclass(bg,
+                "com.oplus.systemui.notification.lockscreen.capsule.CapsuleBackgroundView")) {
+            return;
+        }
+        // Capsule cards only — never style unrelated SystemUI views that might share helpers.
+        if (!isUnderLockScreenCapsuleItem(bg)) return;
+        if (bg.getVisibility() == View.GONE) return;
+        try {
+            GlassInstaller.markLockWallpaperOnly(bg);
+            boolean firstInstall = GlassInstaller.get(bg) == null;
+            if (firstInstall) {
+                GlassInstaller.installBackground(bg, currentConfig());
+            }
+            GlassDrawable live = GlassInstaller.get(bg);
+            if (live == null) return;
+            Rect clip = readLockScreenCapsuleClipRect(bg);
+            float radius = readLockScreenCapsuleRadius(bg, clip);
+            if (radius > 0f) {
+                live.setCornerRadii(radius, radius, radius, radius);
+            }
+            // GlassDrawable.draw re-applies clipRect bounds each frame (list→capsule shrink).
+            int clipW = clip != null ? clip.width() : bg.getWidth();
+            int clipH = clip != null ? clip.height() : bg.getHeight();
+            int prevW = lastCapsuleClipW.get(bg) == null ? -1 : lastCapsuleClipW.get(bg);
+            int prevH = lastCapsuleClipH.get(bg) == null ? -1 : lastCapsuleClipH.get(bg);
+            boolean clipChanged = clipW > 0 && clipH > 0
+                    && (clipW != prevW || clipH != prevH);
+            if (clipW > 0 && clipH > 0) {
+                lastCapsuleClipW.put(bg, clipW);
+                lastCapsuleClipH.put(bg, clipH);
+            }
+            if (bg.getWidth() > 0 && bg.getHeight() > 0) {
+                if (firstInstall || clipChanged) {
+                    GlassInstaller.forceCapture(bg);
+                }
+                bg.invalidate();
+            } else {
+                bg.post(() -> applyLockScreenCapsuleGlass(bg));
+            }
+        } catch (Throwable e) {
+            log(5, TAG, "applyLockScreenCapsuleGlass failed", e);
+        }
+    }
+
+    private final Map<View, Integer> lastCapsuleClipW =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private final Map<View, Integer> lastCapsuleClipH =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    private static boolean isUnderLockScreenCapsuleItem(View view) {
+        for (View current = view; current != null; ) {
+            if (isClassOrSubclass(current,
+                    "com.oplus.systemui.notification.lockscreen.capsule.CapsuleItemView")) {
+                return true;
+            }
+            if (isClassOrSubclass(current,
+                    "com.oplus.systemui.notification.lockscreen.capsule.NotificationCapsuleContainer")) {
+                return true;
+            }
+            ViewParent parent = current.getParent();
+            if (!(parent instanceof View)) break;
+            current = (View) parent;
+        }
+        return false;
+    }
+
+    private static Rect readLockScreenCapsuleClipRect(View bg) {
+        try {
+            Object helper = invokeNoArgs(bg, "getCapsuleHelper");
+            Object pathProvider = field(helper, "pathProvider");
+            Object clip = invokeNoArgs(pathProvider, "getClipRect");
+            if (clip instanceof Rect && !((Rect) clip).isEmpty()) {
+                return new Rect((Rect) clip);
+            }
+        } catch (Throwable ignored) { }
+        try {
+            for (View current = bg; current != null; ) {
+                if (isClassOrSubclass(current,
+                        "com.oplus.systemui.notification.lockscreen.capsule.CapsuleItemView")) {
+                    Object location = field(current, "location");
+                    Object clip = invokeNoArgs(location, "getClipRect");
+                    if (clip instanceof Rect && !((Rect) clip).isEmpty()) {
+                        return new Rect((Rect) clip);
+                    }
+                    break;
+                }
+                ViewParent parent = current.getParent();
+                if (!(parent instanceof View)) break;
+                current = (View) parent;
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
+    private static float readLockScreenCapsuleRadius(View bg, Rect clip) {
+        if (clip != null && clip.width() > 0 && clip.height() > 0) {
+            return Math.min(clip.width(), clip.height()) / 2f;
+        }
+        try {
+            Object helper = invokeNoArgs(bg, "getCapsuleHelper");
+            Object pathProvider = field(helper, "pathProvider");
+            if (pathProvider != null) {
+                Object meta = field(pathProvider, "pathMetaData");
+                Object radius = meta != null ? field(meta, "radius") : null;
+                if (radius == null) radius = invokeNoArgs(pathProvider, "getRadius");
+                if (radius instanceof Number && ((Number) radius).floatValue() > 0f) {
+                    return ((Number) radius).floatValue();
+                }
+            }
+        } catch (Throwable ignored) { }
+        try {
+            Class<?> cfg = Class.forName(
+                    "com.oplus.systemui.notification.lockscreen.config.CapsuleConfig",
+                    false, bg.getClass().getClassLoader());
+            java.lang.reflect.Field f = cfg.getDeclaredField("defaultRadius");
+            f.setAccessible(true);
+            float radius = f.getFloat(null);
+            if (radius > 0f) return radius;
+            Object instance = cfg.getField("INSTANCE").get(null);
+            Object height = invokeNoArgs(instance, "getItemHeight");
+            if (height instanceof Number && ((Number) height).intValue() > 0) {
+                return ((Number) height).intValue() / 2f;
+            }
+        } catch (Throwable ignored) { }
+        int h = bg.getHeight();
+        if (h > 0) return h / 2f;
+        try {
+            int id = bg.getResources().getIdentifier(
+                    "capsule_item_height", "dimen", bg.getContext().getPackageName());
+            if (id != 0) return bg.getResources().getDimension(id) / 2f;
+        } catch (Throwable ignored) { }
+        return 24f * bg.getResources().getDisplayMetrics().density;
+    }
+
+    private static float readLockScreenCapsuleRadius(View bg) {
+        return readLockScreenCapsuleRadius(bg, readLockScreenCapsuleClipRect(bg));
     }
 
     /**

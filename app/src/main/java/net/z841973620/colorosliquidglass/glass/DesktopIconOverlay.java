@@ -125,13 +125,13 @@ final class DesktopIconOverlay {
         }
         View skipHost = findDragView(glassHost) != null ? glassHost : null;
         int painted;
-        // In-folder options menu: sample open Folder icons with FastBitmap (never whole-Folder
-        // rasterize, never per-icon menu composite — clearAppSnaps every settle frame = jank).
+        // In-folder options menu: same cached menu composite as desktop options glass
+        // (paintAppMenuComposite → 角标) + lightweight title. Never whole-Folder rasterize.
         View openFolder = popup ? findOpenFolderView(anchor) : null;
         if (popup && openFolder != null && isFolderCurrentlyOpen(openFolder)) {
             collectOpenFolderDesktopSkips(anchor, openFolder, skipIcons);
             painted = paintOpenFolderIconsInto(openFolder, canvas, globalToTarget, region,
-                    skipHost, skipIcons, false);
+                    skipHost, skipIcons, true);
             if (paintOpenFolderTitleInto(openFolder, canvas, globalToTarget)) {
                 painted++;
             }
@@ -2226,8 +2226,7 @@ final class DesktopIconOverlay {
      * @param skipIcons DragView origins / create-folder drop-target / open FolderIcon only
      * @param openFolderCover while dragging into an open Folder, skip icons under folder content
      * @param menuGlass when true, HW-snap apps so onDraw/ViewOverlay 角标 are included;
-     *                  folders use sticky/soft composites (never nested live-plate HW —
-     *                  that corrupts Cos14 folder glass under the menu after mid-release)
+     *                  Cos14 folders use soft/warm sticky snaps; Cos16 folders keep live-plate HW
      * @return number of desktop items painted
      */
     private static int paintDesktopInto(View seed, Canvas canvas, Matrix globalToTarget,
@@ -2256,9 +2255,9 @@ final class DesktopIconOverlay {
     }
 
     /**
-     * Paint apps inside an open {@code Folder} with FastBitmap + labels (same as idle desktop
-     * icons). Do <b>not</b> pass {@code menuGlass=true}: options-menu composite snaps are
-     * cleared every settle frame and re-rasterizing every folder icon janks badly.
+     * Paint apps inside an open {@code Folder} with the same {@code menuGlass} composite
+     * path as Workspace options menus ({@link #paintAppMenuComposite} for 角标). Callers
+     * must not clear {@code APP_SNAPS} every settle frame. Never rasterize the whole Folder.
      */
     private static int paintOpenFolderIconsInto(View openFolder, Canvas canvas,
             Matrix globalToTarget, RectF region, View skipHost,
@@ -2613,7 +2612,10 @@ final class DesktopIconOverlay {
                         && iconHost.getWidth() > 0 && iconHost.getHeight() > 0) {
                     return paintAppMenuComposite(iconHost, iconHost, canvas, globalToTarget);
                 }
-                return false;
+                // Folder BubbleTextView HW snap can fail; software still includes 角标
+                // (same Cos14 path) — never fall through to FastBitmap-only.
+                rendered = rasterizeViewSoftware(target, w, h);
+                if (rendered == null || rendered.isRecycled()) return false;
             }
             AppSnap snap = new AppSnap();
             snap.bitmap = rendered;
@@ -3000,9 +3002,9 @@ final class DesktopIconOverlay {
     }
 
     /**
-     * @param popupSample when true (options-menu glass), sticky cache — avoid continuous
-     *                    live-plate HW (Cos14 mid-release 花屏). Cos14 warms the invisible
-     *                    plate backdrop once then one-shot HW so AGSL glass is visible.
+     * @param popupSample when true (options-menu glass): Cos14 uses soft/warm sticky snaps to
+     *                    avoid mid-release 花屏; Cos16 keeps live-plate {@link GlassHwRasterizer}
+     *                    so folder LiquidGlass appears under the menu (f4ed435 behavior).
      */
     private static Bitmap folderCompositeBitmap(View folderIcon, int width, int height,
             boolean includeName, boolean popupSample) {
@@ -3017,9 +3019,9 @@ final class DesktopIconOverlay {
         if (cached != null && cached.bitmap != null && !cached.bitmap.isRecycled()
                 && cached.width == width && cached.height == height
                 && cached.includeName == includeName) {
-            if (popupSample) {
+            if (popupSample && cos14) {
                 // Cos14 SoftGlass (no backdrop) must not stick — frame looks missing under menu.
-                if (!cos14 || cached.popupGlassReady) {
+                if (cached.popupGlassReady) {
                     return cached.bitmap;
                 }
             } else if (cached.plateSource == plateSource) {
@@ -3045,8 +3047,9 @@ final class DesktopIconOverlay {
         Bitmap rendered;
         boolean glassReady = false;
         if (popupSample && cos14 && liveGlass && plateHost != null) {
-            // Cos14 plate ImageView is INVISIBLE — PreDraw never warms it. Warm backdrop once
-            // (safe; does not HW-rasterize GlassDrawable), then one-shot AGSL into sticky snap.
+            // Cos14-only: plate ImageView is INVISIBLE — PreDraw never warms it. Warm backdrop
+            // once, then one-shot AGSL into sticky snap. Never use this for Cos16 — nested HW
+            // of the live mBgView is what shows folder glass under desktop/folder menus.
             if (!GlassInstaller.hasBackdropFrame(plateHost)) {
                 try {
                     GlassInstaller.forceCapturePreviewPlate(plateHost);
@@ -3061,16 +3064,12 @@ final class DesktopIconOverlay {
                 rendered = softFolderComposite(folderIcon, plateHost, null, drawW, drawH,
                         drawName);
             }
-        } else if (popupSample && plateSource != null) {
-            // Cos16 / already-warmed plate: software blit of captured backdrop + glyphs.
-            rendered = softFolderComposite(folderIcon, plateHost, plateSource, drawW, drawH,
-                    drawName);
-            glassReady = true;
-        } else if (popupSample) {
+        } else if (popupSample && cos14) {
             rendered = softFolderComposite(folderIcon, plateHost, plateSource, drawW, drawH,
                     drawName);
             glassReady = plateSource != null;
         } else {
+            // Cos16 menu / drag / float: same live-plate HW as f4ed435 (folder glass under menu).
             rendered = hwFolderComposite(folderIcon, plateHost, drawW, drawH, drawName);
             glassReady = true;
         }
