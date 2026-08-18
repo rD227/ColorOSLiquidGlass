@@ -197,6 +197,16 @@ public final class GlassInstaller {
         }
     }
 
+    /** Cos16 unlock: page-flip-style invalidate pumps for folder glass. */
+    public static void startUnlockFolderInvalidatePumps() {
+        BackdropCapture.startUnlockFolderInvalidatePumps();
+    }
+
+    /** OEM unlock scale tick on a FolderIcon. */
+    public static void onFolderUnlockScaleTick(View folderIcon) {
+        BackdropCapture.onFolderUnlockScaleTick(folderIcon);
+    }
+
     /** Removes a previously installed glass background and clears installer bookkeeping. */
     public static void uninstall(View view) {
         if (view == null) return;

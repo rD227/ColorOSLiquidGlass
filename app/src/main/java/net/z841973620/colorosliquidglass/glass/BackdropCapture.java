@@ -12,6 +12,8 @@ import android.view.View;
 import android.view.ViewParent;
 import android.view.ViewTreeObserver;
 
+import net.z841973620.colorosliquidglass.hook.ColorOsVersion;
+
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -205,9 +207,11 @@ import java.util.WeakHashMap;
             capture.rootRef = new WeakReference<>(root);
         }
         if (capture.recording) return;
-        // Lock affordance / RapidReaction: wallpaper is static — skip re-bake when we already
+        // Lock affordance: wallpaper is static — skip re-bake when we already
         // hold a meaningful frame at the current host size (OEM hooks spam apply often).
+        // RapidReaction 分屏/浮窗 must recapture as Overview wallpaper zoom settles.
         if (isWallpaperOnlyGlass(target)
+                && !isRapidReactionGlass(target)
                 && capture.validFrame
                 && capture.frontBitmap != null
                 && !capture.frontBitmap.isRecycled()
@@ -246,6 +250,62 @@ import java.util.WeakHashMap;
             }
         }
         for (View target : targets) target.invalidate();
+        startUnlockFolderInvalidatePumps();
+    }
+
+    /**
+     * Page-flip refreshes because Workspace invalidates every scroll frame. Unlock RenderNode
+     * scale does not — schedule an invalidate-only Choreographer pump so OnPreDraw captures
+     * in the normal draw pass (no off-cycle {@link #forceCapture}, which flickered).
+     */
+    static void startUnlockFolderInvalidatePumps() {
+        List<BackdropCapture> captures = new ArrayList<>();
+        synchronized (CAPTURES) {
+            for (Map.Entry<View, BackdropCapture> entry : CAPTURES.entrySet()) {
+                View target = entry.getKey();
+                BackdropCapture capture = entry.getValue();
+                if (capture == null || target == null) continue;
+                if (!shouldPumpCos16FolderUnlock(captureOwner(target))) continue;
+                captures.add(capture);
+            }
+        }
+        for (BackdropCapture capture : captures) {
+            try {
+                capture.scheduleUnlockFolderInvalidatePump();
+            } catch (Throwable ignored) { }
+        }
+    }
+
+    /** FolderIcon scale tick from OEM unlock anim — dirty + invalidate like a scroll frame. */
+    static void onFolderUnlockScaleTick(View folderIcon) {
+        if (folderIcon == null || !isFolderIconView(folderIcon)) return;
+        if (ColorOsVersion.detect() == ColorOsVersion.Flavor.LEGACY_13_14) return;
+        List<View> hosts = new ArrayList<>();
+        List<BackdropCapture> captures = new ArrayList<>();
+        synchronized (CAPTURES) {
+            for (Map.Entry<View, BackdropCapture> entry : CAPTURES.entrySet()) {
+                View target = entry.getKey();
+                BackdropCapture capture = entry.getValue();
+                if (capture == null || target == null) continue;
+                if (captureOwner(target) != folderIcon) continue;
+                capture.dirty = true;
+                capture.skipCaptureFromSelfInvalidate = false;
+                capture.lastHierarchyScale = Float.NaN;
+                hosts.add(target);
+                captures.add(capture);
+            }
+        }
+        for (int i = 0; i < hosts.size(); i++) {
+            try {
+                hosts.get(i).invalidate();
+            } catch (Throwable ignored) { }
+            try {
+                captures.get(i).scheduleUnlockFolderInvalidatePump();
+            } catch (Throwable ignored) { }
+        }
+        try {
+            folderIcon.invalidate();
+        } catch (Throwable ignored) { }
     }
 
     private final WeakReference<View> targetRef;
@@ -300,6 +360,9 @@ import java.util.WeakHashMap;
     private boolean desktopPopupOpenAnimActive;
     private boolean desktopPopupPumpPosted;
     private final Choreographer.FrameCallback desktopPopupPump;
+    /** Cos16 unlock: invalidate-only pump (page-flip style) — never forceCapture off draw. */
+    private boolean unlockFolderPumpPosted;
+    private final Choreographer.FrameCallback unlockFolderPump;
 
     /** More-functions submenu open: primary plate held at ~0.9 scale / ~0.6 alpha. */
     private static volatile boolean moreFunctionsSubMenuActive;
@@ -358,6 +421,19 @@ import java.util.WeakHashMap;
         }
     }
 
+    private void scheduleUnlockFolderInvalidatePump() {
+        if (unlockFolderPumpPosted) return;
+        View target = targetRef.get();
+        if (target == null || !target.isAttachedToWindow()) return;
+        if (!shouldPumpCos16FolderUnlock(captureOwner(target))) return;
+        unlockFolderPumpPosted = true;
+        try {
+            Choreographer.getInstance().postFrameCallback(unlockFolderPump);
+        } catch (Throwable ignored) {
+            unlockFolderPumpPosted = false;
+        }
+    }
+
     /** True while open scale/alpha is still in flight (or open-anim flag still set). */
     private boolean isDesktopPopupOpening(View host) {
         if (host == null) return false;
@@ -402,6 +478,23 @@ import java.util.WeakHashMap;
                 host.invalidate();
             } catch (Throwable ignored) { }
             scheduleDesktopPopupPump();
+        };
+        unlockFolderPump = frameTimeNanos -> {
+            unlockFolderPumpPosted = false;
+            View host = targetRef.get();
+            if (host == null || !host.isAttachedToWindow()) return;
+            View owner = captureOwner(host);
+            if (!shouldPumpCos16FolderUnlock(owner)) return;
+            dirty = true;
+            skipCaptureFromSelfInvalidate = false;
+            // Invalidate only — capture runs in the next OnPreDraw like Workspace scroll.
+            try {
+                host.invalidate();
+            } catch (Throwable ignored) { }
+            try {
+                if (owner != null) owner.invalidate();
+            } catch (Throwable ignored) { }
+            scheduleUnlockFolderInvalidatePump();
         };
         View root = rootOf(target);
         rootRef = new WeakReference<>(root);
@@ -452,6 +545,12 @@ import java.util.WeakHashMap;
 
         boolean taskGlass = TaskContentOverlay.isTaskView(overlaySourceOf(target));
         boolean desktopPopupGlass = isDesktopPopupGlass(target);
+        boolean unlockLive = isCos16FolderUnlockLiveSample(owner);
+        if (shouldPumpCos16FolderUnlock(owner)) {
+            dirty = true;
+            skipCaptureFromSelfInvalidate = false;
+            scheduleUnlockFolderInvalidatePump();
+        }
         if (taskGlass) {
             float scale = cumulativeScale(owner);
             boolean settled = scale >= 0.995f;
@@ -514,13 +613,14 @@ import java.util.WeakHashMap;
         // Recents task-menu glass: the app is paused when the menu opens, so the behind-menu
         // pixels never change on their own — resample only on geometry change, never because the
         // wallpaper is still animating (that re-renders the protect mask every frame).
-        // Lock-screen affordance / RapidReaction: static wallpaper drawable sample — do not
-        // chase desktop WallpaperScaleTracker (that caused lock-screen jank).
-        if (taskGlass || wallpaperOnly) {
+        // Lock-screen affordance: static wallpaper drawable sample — do not chase desktop
+        // WallpaperScaleTracker (that caused lock-screen jank).
+        // RapidReaction 分屏/浮窗 sit on Overview and must track the same wallpaper zoom as 清除.
+        if (taskGlass || (wallpaperOnly && !isRapidReactionGlass(target))) {
             wallpaperAnimating = false;
         }
         boolean moving = geometryChanged || underDrag || wallpaperAnimating
-                || taskMenuScaleSettling || desktopPopupSettling;
+                || taskMenuScaleSettling || desktopPopupSettling || unlockLive;
 
         // Stationary: keep the last good frame (no idle re-sample). Still allow a one-shot
         // when there is no frame yet, or dirty was set by unlock / install / forceCapture.
@@ -568,8 +668,9 @@ import java.util.WeakHashMap;
         }
 
         boolean wallpaperOnly = isWallpaperOnlyGlass(target);
-        // Wallpaper-only plates (lock affordance / RapidReaction) only care about host
-        // size/position/alpha — not desktop wallpaper depth/scale or workspace scroll.
+        boolean rapidReaction = isRapidReactionGlass(target);
+        // Lock-screen wallpaper-only plates only care about host size/position/alpha.
+        // RapidReaction 分屏/浮窗 must also track Overview wallpaper zoom (same as 清除).
         boolean changed = w != lastTargetW || h != lastTargetH
                 || locationScratch[0] != lastWindowX || locationScratch[1] != lastWindowY
                 || visibleW != lastVisibleW || visibleH != lastVisibleH
@@ -587,7 +688,7 @@ import java.util.WeakHashMap;
         lastRootScale = rootScale;
         lastHierarchyAlpha = hierarchyAlpha;
         lastRootAlpha = rootAlpha;
-        if (!wallpaperOnly) {
+        if (!wallpaperOnly || rapidReaction) {
             float wallpaperDepth = readWallpaperDepth(root);
             float wallpaperScale = WallpaperScaleTracker.current();
             int[] workspaceScroll = readWorkspaceScroll(owner, root);
@@ -874,25 +975,45 @@ import java.util.WeakHashMap;
                 // RapidReaction capsules sit under the live app: desktop/wallpaper only.
                 canvas.restore();
             } else {
-                translateRootToTarget(root, target, canvas);
-                            drawWallpaper(root, canvas, target);
-                View dragView = dragViewAncestor(target);
-                float oldDragAlpha = dragView == null ? 1f : dragView.getAlpha();
-                owner.setAlpha(0f);
-                if (dragView != null) dragView.setAlpha(0f);
-                try {
-                    root.draw(canvas);
-                } catch (Throwable ignored) {
-                } finally {
-                    if (dragView != null) dragView.setAlpha(oldDragAlpha);
+                // Cos16 unlock: map with the live view matrix (fixed pivot scale included) so
+                // the wallpaper footprint tracks S. Off-screen UVs stay CLEAR (not visible).
+                // Capture stays inside OnPreDraw via invalidate pump — no off-cycle forceCapture.
+                boolean unlockLive = isCos16FolderUnlockLiveSample(owner);
+                if (unlockLive) {
+                    if (!concatRootToTarget(root, target, canvas)) {
+                        translateRootToTarget(root, target, canvas);
+                    }
+                    canvas.clipRect(0, 0,
+                            Math.max(1, root.getWidth()), Math.max(1, root.getHeight()));
+                    drawWallpaper(root, canvas, target);
+                    // Wallpaper-only while scaling: skip owner.setAlpha(0)+root.draw (that
+                    // off-draw-cycle flicker when pumps used forceCapture).
+                    canvas.restore();
+                } else {
+                    translateRootToTarget(root, target, canvas);
+                    drawWallpaper(root, canvas, target);
+                    View dragView = dragViewAncestor(target);
+                    float oldDragAlpha = dragView == null ? 1f : dragView.getAlpha();
+                    owner.setAlpha(0f);
+                    if (dragView != null) dragView.setAlpha(0f);
+                    try {
+                        root.draw(canvas);
+                    } catch (Throwable ignored) {
+                    } finally {
+                        if (dragView != null) dragView.setAlpha(oldDragAlpha);
+                    }
+                    canvas.restore();
                 }
-                canvas.restore();
             }
             if (!desktopPopupGlass) {
                 boolean wallpaperOnly = isWallpaperOnlyGlass(target);
                 boolean behindScreen = BehindDisplayCapture.isSysUiMenuGlass(target);
                 boolean seedChanged = dragGlass && seedGen != publishedDragSeedGeneration;
-                complete = isMeaningful(backBitmap)
+                boolean unlockLive = isCos16FolderUnlockLiveSample(owner);
+                // Unlock live: always publish, including fully CLEAR/black plates while the
+                // folder is still entering the screen (otherwise the resting frame sticks).
+                complete = unlockLive
+                        || isMeaningful(backBitmap)
                         || (forced && !validFrame)
                         || (dragGlass && (forced || seedChanged))
                         || (taskGlass && forced)
@@ -944,6 +1065,34 @@ import java.util.WeakHashMap;
         target.getLocationInWindow(targetLocation);
         canvas.translate(rootLocation[0] - targetLocation[0],
                 rootLocation[1] - targetLocation[1]);
+    }
+
+    private static boolean shouldPumpCos16FolderUnlock(View owner) {
+        if (owner == null || !isFolderIconView(owner)) return false;
+        if (ColorOsVersion.detect() == ColorOsVersion.Flavor.LEGACY_13_14) return false;
+        if (isOemUnlockAnimRunning(owner)) return true;
+        return isCos16FolderUnlockLiveSample(owner);
+    }
+
+    private static boolean isCos16FolderUnlockLiveSample(View owner) {
+        if (owner == null || !isFolderIconView(owner)) return false;
+        if (ColorOsVersion.detect() == ColorOsVersion.Flavor.LEGACY_13_14) return false;
+        float sx = Math.abs(owner.getScaleX());
+        float sy = Math.abs(owner.getScaleY());
+        return sx > 1.02f || sy > 1.02f || sx < 0.98f || sy < 0.98f;
+    }
+
+    private static boolean isOemUnlockAnimRunning(View any) {
+        if (any == null) return false;
+        try {
+            Class<?> utils = Class.forName(
+                    "com.android.keyguardservice.KeyGuardDismissedUtils",
+                    false, any.getContext().getClassLoader());
+            Object running = utils.getMethod("getUnlockAnimRunning").invoke(null);
+            return Boolean.TRUE.equals(running);
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     private static boolean concatRootToTarget(View root, View target, Canvas canvas) {
@@ -1060,9 +1209,10 @@ import java.util.WeakHashMap;
             int top = (height - drawHeight) / 2;
             wallpaper.setBounds(left, top, left + drawWidth, top + drawHeight);
             // Desktop wallpaper zoom lives on another surface; mirror it for launcher glass.
-            // Lock affordance / RapidReaction wallpaper-only plates stay 1:1 — chasing
-            // WallpaperScaleTracker forced a redraw every zoom frame on the lock screen.
-            boolean lockOrStatic = isWallpaperOnlyGlass(target);
+            // Lock affordance plates stay 1:1 — chasing WallpaperScaleTracker forced a
+            // redraw every zoom frame on the lock screen.
+            // RapidReaction 分屏/浮窗 are on Overview and must match 清除 (scaled wallpaper).
+            boolean lockOrStatic = isWallpaperOnlyGlass(target) && !isRapidReactionGlass(target);
             float zoom = lockOrStatic ? 1f : WallpaperScaleTracker.current();
             int save = canvas.save();
             if (Math.abs(zoom - 1f) > 0.0005f) {
@@ -1170,6 +1320,11 @@ import java.util.WeakHashMap;
      */
     private static boolean isWallpaperOnlyGlass(View target) {
         if (target != null && WALLPAPER_ONLY.containsKey(target)) return true;
+        return isRapidReactionGlass(target);
+    }
+
+    /** Overview RapidReaction 分屏 / 浮窗 capsules. */
+    private static boolean isRapidReactionGlass(View target) {
         Object tag = target == null ? null : target.getTag();
         return tag instanceof String && ((String) tag).startsWith("colg_rapid_");
     }

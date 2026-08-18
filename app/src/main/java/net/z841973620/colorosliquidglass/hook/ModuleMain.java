@@ -5787,11 +5787,37 @@ public final class ModuleMain extends XposedModule {
 
     /**
      * Unlock briefly zeros DragLayer alpha and resets wallpaper depth. Soft-refresh all glass
-     * hosts through the settle window so backdrops catch up without flashing OEM blur/fallback.
+     * hosts through the settle window. Cos16 FolderIcon unlock scale uses invalidate pumps
+     * (page-flip style) plus live matrix sampling — not off-cycle forceCapture.
      */
     private void hookUnlockGlassRefresh(ClassLoader cl) {
         after("com.android.launcher.Launcher", cl, "onResume", o -> scheduleUnlockGlassRefresh());
         after("com.android.launcher3.Launcher", cl, "onResume", o -> scheduleUnlockGlassRefresh());
+        hookUnlockFolderScaleTicks(cl);
+        try {
+            Class<?> utils = Class.forName(
+                    "com.android.keyguardservice.KeyGuardDismissedUtils", false, cl);
+            for (Method m : utils.getDeclaredMethods()) {
+                if (m.isBridge() || m.isSynthetic()) continue;
+                if (!m.getName().equals("setUnlockAnimRunning") || m.getParameterCount() != 1) {
+                    continue;
+                }
+                hookOnce(m, chain -> {
+                    Object result = chain.proceed();
+                    try {
+                        if (Boolean.TRUE.equals(chain.getArg(0))) {
+                            GlassInstaller.startUnlockFolderInvalidatePumps();
+                        }
+                        scheduleUnlockGlassRefresh();
+                    } catch (Throwable e) {
+                        log(5, TAG, "setUnlockAnimRunning glass refresh failed", e);
+                    }
+                    return result;
+                });
+            }
+        } catch (Throwable e) {
+            log(5, TAG, "KeyGuardDismissedUtils unlock refresh hook unavailable", e);
+        }
         for (String className : new String[] {
                 "com.android.launcher.Launcher",
                 "com.android.launcher3.Launcher",
@@ -5820,6 +5846,7 @@ public final class ModuleMain extends XposedModule {
                                 Object state = chain.getArg(0);
                                 Object lock = invokeNoArgs(state, "getLockState");
                                 if (lock instanceof Number && ((Number) lock).intValue() == 1) {
+                                    GlassInstaller.startUnlockFolderInvalidatePumps();
                                     scheduleUnlockGlassRefresh();
                                 }
                             } catch (Throwable e) {
@@ -5835,14 +5862,53 @@ public final class ModuleMain extends XposedModule {
         }
     }
 
+    /** Each unlock scale tick → dirty folder glass like a Workspace scroll frame. */
+    private void hookUnlockFolderScaleTicks(ClassLoader cl) {
+        try {
+            for (Method m : View.class.getDeclaredMethods()) {
+                if (m.isBridge() || m.isSynthetic()) continue;
+                if (m.getParameterCount() != 1) continue;
+                String name = m.getName();
+                if (!name.equals("setScaleX") && !name.equals("setScaleY")) continue;
+                Class<?> type = m.getParameterTypes()[0];
+                if (type != float.class && type != Float.TYPE) continue;
+                hookOnce(m, chain -> {
+                    Object result = chain.proceed();
+                    try {
+                        Object self = chain.getThisObject();
+                        if (!(self instanceof View)) return result;
+                        View view = (View) self;
+                        if (!isUnlockFolderIconHost(view)) return result;
+                        GlassInstaller.onFolderUnlockScaleTick(view);
+                    } catch (Throwable e) {
+                        log(5, TAG, "View." + name + " unlock glass tick failed", e);
+                    }
+                    return result;
+                });
+            }
+        } catch (Throwable e) {
+            log(5, TAG, "View unlock scale tick hook unavailable", e);
+        }
+    }
+
+    private static boolean isUnlockFolderIconHost(View view) {
+        for (Class<?> c = view.getClass(); c != null; c = c.getSuperclass()) {
+            String name = c.getName();
+            if (name.endsWith(".FolderIcon") || name.endsWith("FolderIcon")) return true;
+        }
+        return false;
+    }
+
     private void scheduleUnlockGlassRefresh() {
         if (!enabled()) return;
         final int token = ++unlockGlassRefreshToken;
         GlassInstaller.refreshAll();
+        GlassInstaller.startUnlockFolderInvalidatePumps();
         for (long delay : new long[] { 48L, 120L, 280L, 500L, 900L }) {
             mainHandler.postDelayed(() -> {
                 if (token != unlockGlassRefreshToken || !enabled()) return;
                 GlassInstaller.refreshAll();
+                GlassInstaller.startUnlockFolderInvalidatePumps();
             }, delay);
         }
     }
