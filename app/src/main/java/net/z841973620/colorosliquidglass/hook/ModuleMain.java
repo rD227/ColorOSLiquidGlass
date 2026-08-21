@@ -34,6 +34,7 @@ import net.z841973620.colorosliquidglass.glass.GlassInstaller;
 import net.z841973620.colorosliquidglass.glass.LauncherAshmemMode;
 import net.z841973620.colorosliquidglass.glass.TaskContentOverlay;
 import net.z841973620.colorosliquidglass.glass.WallpaperScaleTracker;
+import net.z841973620.colorosliquidglass.glass.VolumePanelGlass;
 import net.z841973620.colorosliquidglass.ipc.DesktopBackdropClient;
 import net.z841973620.colorosliquidglass.ipc.DesktopBackdropHub;
 
@@ -115,6 +116,7 @@ public final class ModuleMain extends XposedModule {
             // e9e3cd0 behavior: always mount the full FlexibleMenu / BehindDisplayCapture chain.
             // Class-not-found only logs; never let OS14 COUI stub replace this path on ColorOS 16.
             hookSystemUiFloatMenus(cl);
+            hookSystemUiVolumeGlass(cl);
             DesktopBackdropClient.warmUp();
             // Cos16 SystemUI CL often lacks FlexibleMenuManager → useLegacy true would wrongly
             // take Os14 AOSP updateButton and never install Cos16 glass.
@@ -3489,6 +3491,222 @@ public final class ModuleMain extends XposedModule {
                 }
             } catch (Throwable ignored) { }
         });
+    }
+
+    /**
+     * ColorOS 16 volume indicator + expanded panel: strip OEM blur and install live glass.
+     * Capture is the float-menu split (ashmem on launcher pages, captureDisplay on apps/lock).
+     */
+    private void hookSystemUiVolumeGlass(ClassLoader cl) {
+        after("com.oplus.systemui.volume.view.OplusVolumeDialogView", cl, "initDialog",
+                this::scheduleVolumePanelGlass);
+        after("com.oplus.systemui.volume.view.OplusVolumeDialogView", cl, "showSliderVolume",
+                this::scheduleVolumePanelGlass);
+        after("com.oplus.systemui.volume.view.OplusVolumeDialogView", cl, "expandPanel",
+                this::scheduleVolumePanelGlass);
+        after("com.oplus.systemui.volume.view.OplusVolumeDialogView", cl, "updateRowsH",
+                this::scheduleVolumePanelGlass);
+        after("com.oplus.systemui.volume.view.OplusVolumeDialogView", cl, "checkSettingButtonIsVisible",
+                this::scheduleVolumePanelGlass);
+        after("com.oplus.systemui.volume.view.OplusVolumeDialogView", cl, "dismissH",
+                this::releaseVolumePanelGlass);
+        after("com.oplus.systemui.volume.OplusVolumeDialogImpl", cl, "showH", impl -> {
+            scheduleVolumePanelGlass(field(impl, "mOplusVolumeDialogView"));
+        });
+        after("com.oplus.systemui.volume.OplusVolumeDialogImpl", cl, "expandPanel", impl -> {
+            scheduleVolumePanelGlass(field(impl, "mOplusVolumeDialogView"));
+        });
+        after("com.oplus.systemui.volume.OplusVolumeDialogImpl", cl, "dismissH", impl -> {
+            releaseVolumePanelGlass(field(impl, "mOplusVolumeDialogView"));
+        });
+
+        try {
+            Class<?> blur = Class.forName(
+                    "com.oplus.systemui.volume.utils.VolumeBlurManager", false, cl);
+            for (Method m : blur.getDeclaredMethods()) {
+                if (m.isBridge()) continue;
+                String name = m.getName();
+                if ("getVolumeBarBackground".equals(name)
+                        || "getVolumePanelBackground".equals(name)
+                        || "tryTakeScreenshotForBlur".equals(name)) {
+                    hookOnce(m, chain -> {
+                        if (!enabled()) return chain.proceed();
+                        if ("tryTakeScreenshotForBlur".equals(name)) {
+                            return null;
+                        }
+                        if ("getVolumeBarBackground".equals(name)) {
+                            return VolumePanelGlass.transparentBarBackground();
+                        }
+                        return VolumePanelGlass.transparentPanelBackground();
+                    });
+                }
+            }
+        } catch (Throwable e) {
+            log(5, TAG, "VolumeBlurManager hooks unavailable", e);
+        }
+
+        try {
+            Class<?> seek = Class.forName(
+                    "com.coui.appcompat.seekbar.COUIVerticalSeekBar", false, cl);
+            for (Method m : seek.getDeclaredMethods()) {
+                if (!"onDraw".equals(m.getName()) || m.getParameterCount() != 1) continue;
+                hookOnce(m, chain -> {
+                    try {
+                        VolumePanelGlass.clearSeekBarOemFill(chain.getThisObject());
+                    } catch (Throwable ignored) { }
+                    return chain.proceed();
+                });
+            }
+        } catch (Throwable e) {
+            log(5, TAG, "COUIVerticalSeekBar.onDraw volume fill hook unavailable", e);
+        }
+
+        hookNotificationCenterBlur(cl);
+        hookCloseAllButtonGlass(cl);
+    }
+
+    /**
+     * Cancel the frosted blur that appears behind the notification list when sliding a
+     * card up into the message list. The blur is applied to the behind scrim by
+     * {@code ScrimControllerExImp.showBehindScrim}; keep that call for QS / Bouncer paths
+     * but zero the amount on the keyguard notification-center transition.
+     */
+    private void hookNotificationCenterBlur(ClassLoader cl) {
+        try {
+            Class<?> c = Class.forName(
+                    "com.oplus.systemui.statusbar.phone.ScrimControllerExImp", false, cl);
+            for (Method m : c.getDeclaredMethods()) {
+                if (!"showBehindScrim".equals(m.getName()) || m.isBridge() || m.isSynthetic()) {
+                    continue;
+                }
+                Class<?>[] params = m.getParameterTypes();
+                if (params.length != 2 || params[0] != float.class
+                        || params[1] != boolean.class) {
+                    continue;
+                }
+                hookOnce(m, chain -> {
+                    if (!enabled()) return chain.proceed();
+                    try {
+                        Object self = chain.getThisObject();
+                        java.util.List<Object> args = chain.getArgs();
+                        if (args.size() == 2 && Boolean.FALSE.equals(args.get(1))
+                                && args.get(0) instanceof Float
+                                && ((Float) args.get(0)).floatValue() > 0f
+                                && isKgNotificationCenter(self)) {
+                            // Card slide-up into the message list: no blur / no scrim scale.
+                            return chain.proceed(new Object[] { 0f, args.get(1) });
+                        }
+                    } catch (Throwable ignored) { }
+                    return chain.proceed();
+                });
+                break;
+            }
+        } catch (Throwable e) {
+            log(5, TAG, "showBehindScrim notification-center blur hook unavailable", e);
+        }
+    }
+
+    private static boolean isKgNotificationCenter(Object scrimEx) {
+        if (scrimEx == null) return false;
+        try {
+            Object r = scrimEx.getClass().getMethod("isKgNotificationCenter").invoke(scrimEx);
+            return Boolean.TRUE.equals(r);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * Install glass on the lock-screen message-list "收起" button ({@code OplusCloseAllButton}).
+     * The OEM background is a {@code MaskBlurDrawable} from {@code OplusCloseAllController};
+     * once glass is installed, ignore further non-glass background sets and re-assert on
+     * attach / layout.
+     */
+    private void hookCloseAllButtonGlass(ClassLoader cl) {
+        final String btnClass = "com.oplus.systemui.statusbar.notification.view.OplusCloseAllButton";
+        if (!hasClass(cl, btnClass)) {
+            log(4, TAG, "hookCloseAllButtonGlass skipped (no OplusCloseAllButton)");
+            return;
+        }
+        after("com.oplus.systemui.statusbar.notification.OplusCloseAllController", cl, "bindView",
+                this::applyCloseAllButtonGlass);
+        after(btnClass, cl, "onAttachedToWindow", this::applyCloseAllButtonGlass);
+        after(btnClass, cl, "onLayout", this::applyCloseAllButtonGlass);
+        try {
+            Method setBackground = View.class.getMethod("setBackground", Drawable.class);
+            hookOnce(setBackground, chain -> {
+                if (!enabled()) return chain.proceed();
+                try {
+                    Object self = chain.getThisObject();
+                    java.util.List<Object> args = chain.getArgs();
+                    if (self instanceof View && isCloseAllButton((View) self)
+                            && GlassInstaller.get((View) self) != null
+                            && !args.isEmpty()
+                            && !(args.get(0) instanceof GlassDrawable)) {
+                        return null;
+                    }
+                } catch (Throwable ignored) { }
+                return chain.proceed();
+            });
+        } catch (Throwable e) {
+            log(5, TAG, "OplusCloseAllButton setBackground hook unavailable", e);
+        }
+    }
+
+    private static boolean isCloseAllButton(View view) {
+        if (view == null) return false;
+        String name = view.getClass().getName();
+        return name != null && name.contains("OplusCloseAllButton");
+    }
+
+    private void applyCloseAllButtonGlass(Object obj) {
+        if (!enabled()) return;
+        View btn = null;
+        if (obj instanceof View && isCloseAllButton((View) obj)) {
+            btn = (View) obj;
+        } else {
+            Object f = field(obj, "oplusCloseAllButton");
+            if (f instanceof View && isCloseAllButton((View) f)) btn = (View) f;
+        }
+        if (btn == null || !btn.isAttachedToWindow()) return;
+        if (btn.getWidth() <= 0 || btn.getHeight() <= 0) return;
+        try {
+            GlassInstaller.markLockWallpaperOnly(btn);
+            boolean firstInstall = GlassInstaller.get(btn) == null;
+            if (firstInstall) {
+                GlassInstaller.installBackground(btn, currentConfig());
+            }
+            GlassDrawable live = GlassInstaller.get(btn);
+            if (live == null) return;
+            if (firstInstall) {
+                GlassInstaller.forceCapture(btn);
+            }
+            btn.invalidate();
+        } catch (Throwable e) {
+            log(5, TAG, "applyCloseAllButtonGlass failed", e);
+        }
+    }
+
+    private void scheduleVolumePanelGlass(Object dialogView) {
+        if (!enabled() || dialogView == null) return;
+        if (!isClassOrSubclass(dialogView, "com.oplus.systemui.volume.view.OplusVolumeDialogView")) {
+            Object nested = field(dialogView, "mOplusVolumeDialogView");
+            if (nested != null) dialogView = nested;
+        }
+        VolumePanelGlass.schedule(dialogView, currentConfig());
+    }
+
+    private void releaseVolumePanelGlass(Object dialogView) {
+        if (dialogView == null) return;
+        if (!isClassOrSubclass(dialogView, "com.oplus.systemui.volume.view.OplusVolumeDialogView")) {
+            Object nested = field(dialogView, "mOplusVolumeDialogView");
+            if (nested != null) dialogView = nested;
+        }
+        try {
+            VolumePanelGlass.release(dialogView);
+        } catch (Throwable t) {
+            log(5, TAG, "volume glass release failed", t);
+        }
     }
 
     private void cancelPendingFloatMenuGlass() {

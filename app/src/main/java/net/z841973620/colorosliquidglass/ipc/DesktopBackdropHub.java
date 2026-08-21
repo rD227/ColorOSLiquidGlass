@@ -297,20 +297,17 @@ public final class DesktopBackdropHub {
         }
         if (liveCrop.isEmpty()) return;
         int busy = publishBusyIdx.get();
-        int genBefore = DesktopBackdropSampler.contentGeneration();
+        DesktopBackdropSampler.invalidateCache();
         Bitmap plate = DesktopBackdropSampler.captureLiveRegion(busy);
         if (plate == null || plate.isRecycled()) return;
-        int gen = DesktopBackdropSampler.contentGeneration();
-        // Pipe dedup: unchanged desktop → keep last ashmem frame (SysUI peeks).
-        if (gen == genBefore && gen == lastPublishedGen.get() && ar.frameSeq() > 0) {
-            return;
-        }
+        // Always publish while LIVE so SystemUI volume / float-menu glass tracks every vsync.
+        // Dedup froze desktop volume glass because the bar's crop moves independently of icons.
         int idx = DesktopBackdropSampler.lastCaptureIndex();
         synchronized (LATEST_LOCK) {
             latestPlate = plate;
             latestIdx = idx;
         }
-        lastPublishedGen.set(gen);
+        lastPublishedGen.set(DesktopBackdropSampler.contentGeneration());
         schedulePublish(ar);
     }
 

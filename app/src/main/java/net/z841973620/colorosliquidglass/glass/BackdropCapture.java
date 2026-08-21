@@ -41,6 +41,9 @@ import java.util.WeakHashMap;
      */
     private static final Map<View, Integer> WALLPAPER_ONLY =
             Collections.synchronizedMap(new WeakHashMap<>());
+    /** Volume-on-lock: sample lock wallpaper plus in-process clock / notifications. */
+    private static final Map<View, Boolean> LOCK_CONTENT =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     static BackdropCapture register(View target) {
         synchronized (CAPTURES) {
@@ -189,7 +192,7 @@ import java.util.WeakHashMap;
     /** Forces an immediate target-local capture, used while resize-frame geometry is animating. */
     static void forceCapture(View target) {
         if (target == null || target.getWidth() <= 0 || target.getHeight() <= 0) return;
-        if (BehindDisplayCapture.isSysUiMenuGlass(target)) {
+        if (BehindDisplayCapture.isSysUiLiveGlass(target)) {
             BehindDisplayCapture.requestRefresh(target, true);
             return;
         }
@@ -223,6 +226,33 @@ import java.util.WeakHashMap;
         capture.dirty = true;
         capture.capture(root, target, true);
     }
+
+    /**
+     * Samples the backdrop at an explicit window rect instead of the target's current
+     * window location. The folder (FolderIcon) path samples through a host inside the
+     * FolderIcon, so getLocationInWindow naturally matches where the glass is drawn.
+     * Create-folder previews draw their plate on CellLayout coordinates while the parked
+     * host sits on DragLayer — its getLocationInWindow misses CellLayout/Workspace
+     * transforms (scale/scroll/padding), so the backdrop drifts toward the bottom-right.
+     * Sampling from the same window rect the glass is drawn with keeps them identical.
+     */
+    static void forceCaptureAtWindow(View target, int winLeft, int winTop) {
+        if (target == null) return;
+        int[] prev = WINDOW_OVERRIDE.get();
+        WINDOW_OVERRIDE.set(new int[]{winLeft, winTop});
+        try {
+            forceCapture(target);
+        } finally {
+            if (prev == null) {
+                WINDOW_OVERRIDE.remove();
+            } else {
+                WINDOW_OVERRIDE.set(prev);
+            }
+        }
+    }
+
+    /** Optional explicit window origin for {@link #forceCaptureAtWindow}. */
+    private static final ThreadLocal<int[]> WINDOW_OVERRIDE = new ThreadLocal<>();
 
     /**
      * Marks every live capture dirty. Used after unlock / resume when wallpaper and
@@ -363,6 +393,9 @@ import java.util.WeakHashMap;
     /** Cos16 unlock: invalidate-only pump (page-flip style) — never forceCapture off draw. */
     private boolean unlockFolderPumpPosted;
     private final Choreographer.FrameCallback unlockFolderPump;
+    /** Lock-screen volume: keep resampling so clock / capsules show through the glass. */
+    private boolean lockContentPumpPosted;
+    private final Choreographer.FrameCallback lockContentPump;
 
     /** More-functions submenu open: primary plate held at ~0.9 scale / ~0.6 alpha. */
     private static volatile boolean moreFunctionsSubMenuActive;
@@ -418,6 +451,20 @@ import java.util.WeakHashMap;
             Choreographer.getInstance().postFrameCallback(desktopPopupPump);
         } catch (Throwable ignored) {
             desktopPopupPumpPosted = false;
+        }
+    }
+
+    /** Pump while the lock-screen volume glass is marked — clock changes need resampling. */
+    private void scheduleLockContentPump() {
+        if (lockContentPumpPosted) return;
+        View target = targetRef.get();
+        if (target == null || !target.isAttachedToWindow()) return;
+        if (!isLockContentGlass(target)) return;
+        lockContentPumpPosted = true;
+        try {
+            Choreographer.getInstance().postFrameCallback(lockContentPump);
+        } catch (Throwable ignored) {
+            lockContentPumpPosted = false;
         }
     }
 
@@ -496,6 +543,18 @@ import java.util.WeakHashMap;
             } catch (Throwable ignored) { }
             scheduleUnlockFolderInvalidatePump();
         };
+        lockContentPump = frameTimeNanos -> {
+            lockContentPumpPosted = false;
+            View host = targetRef.get();
+            if (host == null || !host.isAttachedToWindow()) return;
+            if (!isLockContentGlass(host)) return;
+            dirty = true;
+            skipCaptureFromSelfInvalidate = false;
+            try {
+                host.invalidate();
+            } catch (Throwable ignored) { }
+            scheduleLockContentPump();
+        };
         View root = rootOf(target);
         rootRef = new WeakReference<>(root);
         root.addOnAttachStateChangeListener(this);
@@ -545,11 +604,18 @@ import java.util.WeakHashMap;
 
         boolean taskGlass = TaskContentOverlay.isTaskView(overlaySourceOf(target));
         boolean desktopPopupGlass = isDesktopPopupGlass(target);
+        boolean lockContent = isLockContentGlass(target);
         boolean unlockLive = isCos16FolderUnlockLiveSample(owner);
         if (shouldPumpCos16FolderUnlock(owner)) {
             dirty = true;
             skipCaptureFromSelfInvalidate = false;
             scheduleUnlockFolderInvalidatePump();
+        }
+        if (lockContent) {
+            // Lock clock / notification capsules change even while the bar is stationary.
+            dirty = true;
+            skipCaptureFromSelfInvalidate = false;
+            scheduleLockContentPump();
         }
         if (taskGlass) {
             float scale = cumulativeScale(owner);
@@ -571,7 +637,7 @@ import java.util.WeakHashMap;
         // SystemUI float menus: live while open. Keep a Choreographer pump via
         // postInvalidateOnAnimation — otherwise once the menu settles and poll returns
         // null, traversals stop and onPreDraw never runs again (upward "freeze").
-        if (BehindDisplayCapture.isSysUiMenuGlass(target)) {
+        if (BehindDisplayCapture.isSysUiLiveGlass(target)) {
             if (!target.isAttachedToWindow()) {
                 BehindDisplayCapture.stopStreaming(target);
             } else {
@@ -599,7 +665,7 @@ import java.util.WeakHashMap;
 
         // Skip the invalidate echo from publishing a frame, but never drop a real geometry /
         // background-scale change (Recents wallpaper zoom keeps folder layout coords fixed).
-        if (skipCaptureFromSelfInvalidate) {
+        if (skipCaptureFromSelfInvalidate && !lockContent) {
             skipCaptureFromSelfInvalidate = false;
             if (!geometryChanged && !dirty) {
                 if (desktopPopupGlass) scheduleDesktopPopupPump();
@@ -616,10 +682,11 @@ import java.util.WeakHashMap;
         // Lock-screen affordance: static wallpaper drawable sample — do not chase desktop
         // WallpaperScaleTracker (that caused lock-screen jank).
         // RapidReaction 分屏/浮窗 sit on Overview and must track the same wallpaper zoom as 清除.
-        if (taskGlass || (wallpaperOnly && !isRapidReactionGlass(target))) {
+        if (taskGlass || ((wallpaperOnly || lockContent) && !isRapidReactionGlass(target))) {
             wallpaperAnimating = false;
         }
         boolean moving = geometryChanged || underDrag || wallpaperAnimating
+                || lockContent
                 || taskMenuScaleSettling || desktopPopupSettling || unlockLive;
 
         // Stationary: keep the last good frame (no idle re-sample). Still allow a one-shot
@@ -952,7 +1019,7 @@ import java.util.WeakHashMap;
                 } catch (Throwable ignored) {
                 }
                 canvas.restore();
-            } else if (BehindDisplayCapture.isSysUiMenuGlass(target)) {
+            } else if (BehindDisplayCapture.isSysUiLiveGlass(target)) {
                 translateRootToTarget(root, target, canvas);
                             drawWallpaper(root, canvas, target);
                 // Float/split app-options: sample composited content under the popup
@@ -967,6 +1034,17 @@ import java.util.WeakHashMap;
                     }
                 } catch (Throwable ignored) {
                     try { drawWallpaper(root, canvas, target); } catch (Throwable ignored2) { }
+                }
+                canvas.restore();
+            } else if (isLockContentGlass(target)) {
+                translateRootToTarget(root, target, canvas);
+                drawWallpaper(root, canvas, target);
+                canvas.restore();
+                canvas.save();
+                canvas.scale(scale, scale);
+                try {
+                    LockscreenContentOverlay.paintIntoTargetLocal(target, canvas);
+                } catch (Throwable ignored) {
                 }
                 canvas.restore();
             } else if (isWallpaperOnlyGlass(target)) {
@@ -996,10 +1074,18 @@ import java.util.WeakHashMap;
                     float oldDragAlpha = dragView == null ? 1f : dragView.getAlpha();
                     owner.setAlpha(0f);
                     if (dragView != null) dragView.setAlpha(0f);
+                    // Mark this whole root.draw as a backdrop sample so the Cos14 folder
+                    // drawBackground hook returns early - otherwise the folder's own glass
+                    // gets painted into this backdrop and the next glass draw stacks two
+                    // plates (the "doubled folder glass" symptom).
+                    net.z841973620.colorosliquidglass.glass.GlassInstaller
+                            .beginPreviewBackdropCapture();
                     try {
                         root.draw(canvas);
                     } catch (Throwable ignored) {
                     } finally {
+                        net.z841973620.colorosliquidglass.glass.GlassInstaller
+                                .endPreviewBackdropCapture();
                         if (dragView != null) dragView.setAlpha(oldDragAlpha);
                     }
                     canvas.restore();
@@ -1007,17 +1093,19 @@ import java.util.WeakHashMap;
             }
             if (!desktopPopupGlass) {
                 boolean wallpaperOnly = isWallpaperOnlyGlass(target);
-                boolean behindScreen = BehindDisplayCapture.isSysUiMenuGlass(target);
+                boolean lockContent = isLockContentGlass(target);
+                boolean behindScreen = BehindDisplayCapture.isSysUiLiveGlass(target);
                 boolean seedChanged = dragGlass && seedGen != publishedDragSeedGeneration;
                 boolean unlockLive = isCos16FolderUnlockLiveSample(owner);
                 // Unlock live: always publish, including fully CLEAR/black plates while the
                 // folder is still entering the screen (otherwise the resting frame sticks).
                 complete = unlockLive
                         || isMeaningful(backBitmap)
-                        || (forced && !validFrame)
+                        || (forced && !validFrame && isMeaningful(backBitmap))
                         || (dragGlass && (forced || seedChanged))
                         || (taskGlass && forced)
                         || (wallpaperOnly && forced)
+                        || (lockContent && forced)
                         || (behindScreen && forced);
             }
         } catch (Throwable ignored) {
@@ -1062,7 +1150,13 @@ import java.util.WeakHashMap;
         int[] rootLocation = new int[2];
         int[] targetLocation = new int[2];
         root.getLocationInWindow(rootLocation);
-        target.getLocationInWindow(targetLocation);
+        int[] override = WINDOW_OVERRIDE.get();
+        if (override != null) {
+            targetLocation[0] = override[0];
+            targetLocation[1] = override[1];
+        } else {
+            target.getLocationInWindow(targetLocation);
+        }
         canvas.translate(rootLocation[0] - targetLocation[0],
                 rootLocation[1] - targetLocation[1]);
     }
@@ -1193,6 +1287,27 @@ import java.util.WeakHashMap;
         backBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     }
 
+    /** Lock-screen wallpaper drawable for in-process notification-card blur. */
+    static Drawable lockWallpaperDrawable(android.content.Context context) {
+        if (context == null) return null;
+        try {
+            Drawable lock = peekOplusLockWallpaper(context);
+            if (lock != null) return lock;
+        } catch (Throwable ignored) { }
+        try {
+            WallpaperManager wm = WallpaperManager.getInstance(context);
+            java.lang.reflect.Method m =
+                    WallpaperManager.class.getMethod("getDrawable", int.class);
+            Object d = m.invoke(wm, WallpaperManager.FLAG_LOCK);
+            if (d instanceof Drawable) return (Drawable) d;
+        } catch (Throwable ignored) { }
+        try {
+            return WallpaperManager.getInstance(context).getDrawable();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     private static void drawWallpaper(View root, Canvas canvas, View target) {
         try {
             Drawable wallpaper = resolveWallpaperDrawable(root.getContext(), target);
@@ -1298,6 +1413,31 @@ import java.util.WeakHashMap;
     /** Sample the lock-screen wallpaper (not home/desktop). */
     static void markLockWallpaperOnly(View target) {
         markWallpaperOnly(target, WallpaperManager.FLAG_LOCK);
+        LOCK_CONTENT.remove(target);
+    }
+
+    static void markLockContent(View target) {
+        if (target == null) return;
+        WALLPAPER_ONLY.remove(target);
+        LOCK_CONTENT.put(target, Boolean.TRUE);
+    }
+
+    static void clearLockContent(View target) {
+        if (target != null) LOCK_CONTENT.remove(target);
+    }
+
+    static boolean hasLockContentMark(View target) {
+        return target != null && LOCK_CONTENT.containsKey(target);
+    }
+
+    static void clearWallpaperOnly(View target) {
+        if (target == null) return;
+        WALLPAPER_ONLY.remove(target);
+        LOCK_CONTENT.remove(target);
+    }
+
+    static boolean hasWallpaperOnlyMark(View target) {
+        return target != null && WALLPAPER_ONLY.containsKey(target);
     }
 
     static void markWallpaperOnly(View target, int which) {
@@ -1309,8 +1449,13 @@ import java.util.WeakHashMap;
 
     private static boolean wantsLockWallpaper(View target) {
         if (target == null) return false;
+        if (LOCK_CONTENT.containsKey(target)) return true;
         Integer which = WALLPAPER_ONLY.get(target);
         return which != null && which == WallpaperManager.FLAG_LOCK;
+    }
+
+    private static boolean isLockContentGlass(View target) {
+        return target != null && LOCK_CONTENT.containsKey(target);
     }
 
     /**
@@ -1426,6 +1571,10 @@ import java.util.WeakHashMap;
         desktopPopupPumpPosted = false;
         try {
             Choreographer.getInstance().removeFrameCallback(desktopPopupPump);
+        } catch (Throwable ignored) { }
+        lockContentPumpPosted = false;
+        try {
+            Choreographer.getInstance().removeFrameCallback(lockContentPump);
         } catch (Throwable ignored) { }
         taskMenuScaleSettling = false;
     }

@@ -23,15 +23,16 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Live full-resolution backdrop for SystemUI float option menus.
+ * Live full-resolution backdrop for SystemUI float option menus and the volume panel.
  * <p>
- * DESKTOP (v8): only when the menu opens above a float that sits on the launcher.
- * SystemUI sends max menu rect once; Launcher streams that region into Ashmem.
- * APP: {@code captureDisplay} (menu over float app, or float not on launcher).
+ * DESKTOP: Launcher ashmem region stream (home / widget page / Overview).
+ * APP: {@code captureDisplay} (app content including floats).
+ * Lock-screen volume is not live here — wallpaper + in-process clock/notifications.
  */
 public final class BehindDisplayCapture {
     private static final String TAG = "ColorOSLiquidGlass";
     private static final String TAG_MENU = "colg_sysui_menu";
+    private static final String TAG_VOLUME = "colg_sysui_volume";
     private static final Paint BITMAP_PAINT = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
     private static final float CAPTION_EDGE_DP = 12f;
 
@@ -58,6 +59,11 @@ public final class BehindDisplayCapture {
         boolean stickyDesktop;
         boolean noCaptureFallback;
         boolean detachHooked;
+        /**
+         * Keep {@link #menuRegion} as a shared union (volume sliders + settings).
+         * Do not shrink it to this host's rect on each refresh.
+         */
+        boolean pinMenuRegion;
         /** Epoch captured when this host opened LIVE — stale after forceClose. */
         int openEpoch = -1;
     }
@@ -105,8 +111,24 @@ public final class BehindDisplayCapture {
     private BehindDisplayCapture() {}
 
     public static boolean isSysUiMenuGlass(View target) {
+        return hasTag(target, TAG_MENU);
+    }
+
+    public static boolean isVolumeGlass(View target) {
+        return hasTag(target, TAG_VOLUME);
+    }
+
+    /** Float menus and volume-panel hosts share the live BehindDisplayCapture path. */
+    public static boolean isSysUiLiveGlass(View target) {
+        // Lock-screen volume samples wallpaper + in-process clock/notifications.
+        if (BackdropCapture.hasWallpaperOnlyMark(target)) return false;
+        if (BackdropCapture.hasLockContentMark(target)) return false;
+        return isSysUiMenuGlass(target) || isVolumeGlass(target);
+    }
+
+    private static boolean hasTag(View target, String expected) {
         Object tag = target == null ? null : target.getTag();
-        return tag instanceof String && TAG_MENU.equals(tag);
+        return tag instanceof String && expected.equals(tag);
     }
 
     public static void tagHost(View host) {
@@ -114,6 +136,14 @@ public final class BehindDisplayCapture {
         Object existing = host.getTag();
         if (existing instanceof String && ((String) existing).startsWith("colg_rapid_")) return;
         host.setTag(TAG_MENU);
+    }
+
+    public static void tagVolumeHost(View host) {
+        if (host == null) return;
+        Object existing = host.getTag();
+        if (existing instanceof String && ((String) existing).startsWith("colg_rapid_")) return;
+        if (existing instanceof String && TAG_MENU.equals(existing)) return;
+        host.setTag(TAG_VOLUME);
     }
 
     public static void bindDesktop(View host, Rect floatBoundsOnScreen) {
@@ -133,6 +163,7 @@ public final class BehindDisplayCapture {
         if (host == null) return;
         HostState s = stateOf(host);
         s.mode = Mode.DESKTOP;
+        s.pinMenuRegion = false;
         if (upwardFloatMenu) {
             s.stickyDesktop = true;
             s.noCaptureFallback = true;
@@ -153,11 +184,30 @@ public final class BehindDisplayCapture {
         openSessionIfNeeded(host, s);
     }
 
+    /**
+     * Volume panel: several glass hosts crop from one Launcher region. {@code regionOnScreen}
+     * is the union of those hosts; per-host refresh must not overwrite it.
+     */
+    public static void bindPinnedDesktop(View host, Rect regionOnScreen) {
+        bindDesktop(host, null, regionOnScreen, true);
+        HostState s = stateOf(host);
+        s.pinMenuRegion = true;
+    }
+
+    /** Volume indicator on launcher: LIVE ashmem, crop refreshed every frame to the pill. */
+    public static void bindVolumeDesktop(View host) {
+        if (host == null) return;
+        Rect r = volumeGlassScreenRect(host);
+        bindDesktop(host, null, r, true);
+    }
+
     public static void bindApp(View host, Rect floatBoundsOnScreen) {
         if (host == null) return;
         HostState s = stateOf(host);
         // Sticky DESKTOP only while the LIVE session for this epoch is still open.
-        if (s.stickyDesktop && s.mode == Mode.DESKTOP && s.sessionOpen
+        // Volume hosts must be able to switch to captureDisplay when an app/float appears.
+        if (!isVolumeGlass(host)
+                && s.stickyDesktop && s.mode == Mode.DESKTOP && s.sessionOpen
                 && s.openEpoch == DesktopBackdropClient.sessionEpoch()
                 && DesktopBackdropClient.isDesktopHomeValid()) {
             if (floatBoundsOnScreen != null) s.floatBounds.set(floatBoundsOnScreen);
@@ -171,6 +221,7 @@ public final class BehindDisplayCapture {
         s.mode = Mode.APP;
         s.stickyDesktop = false;
         s.noCaptureFallback = false;
+        s.pinMenuRegion = false;
         s.menuRegion.setEmpty();
         if (floatBoundsOnScreen != null) s.floatBounds.set(floatBoundsOnScreen);
         else s.floatBounds.setEmpty();
@@ -275,16 +326,28 @@ public final class BehindDisplayCapture {
         GlassDrawable glass = GlassInstaller.get(host);
         if (glass != null) blurPx = glass.blurRadiusPx();
 
+        boolean volume = isVolumeGlass(host);
+        Rect sampleRect = volume
+                ? volumeGlassScreenRect(host)
+                : new Rect(loc[0], loc[1], loc[0] + width, loc[1] + height);
+        if (sampleRect == null || sampleRect.isEmpty()) {
+            sampleRect = new Rect(loc[0], loc[1], loc[0] + width, loc[1] + height);
+        }
+        int sampleX = sampleRect.left;
+        int sampleY = sampleRect.top;
+        int sampleW = sampleRect.width();
+        int sampleH = sampleRect.height();
+
         boolean force = s.forceOnce;
         s.forceOnce = false;
         boolean geometryChanged = force
-                || loc[0] != s.lastScreenX || loc[1] != s.lastScreenY
-                || width != s.lastWidth || height != s.lastHeight
+                || sampleX != s.lastScreenX || sampleY != s.lastScreenY
+                || sampleW != s.lastWidth || sampleH != s.lastHeight
                 || Float.compare(blurPx, s.lastBlurPx) != 0;
-        s.lastScreenX = loc[0];
-        s.lastScreenY = loc[1];
-        s.lastWidth = width;
-        s.lastHeight = height;
+        s.lastScreenX = sampleX;
+        s.lastScreenY = sampleY;
+        s.lastWidth = sampleW;
+        s.lastHeight = sampleH;
         s.lastBlurPx = blurPx;
 
         // DESKTOP: push current glass screen rect to Launcher, poll matching region frame.
@@ -293,13 +356,21 @@ public final class BehindDisplayCapture {
             if (!DesktopBackdropClient.isReady()) {
                 DesktopBackdropClient.warmUp();
             }
-            Rect hostRect = new Rect(loc[0], loc[1], loc[0] + width, loc[1] + height);
-            if (!hostRect.isEmpty()) {
-                s.menuRegion.set(hostRect);
+            if (volume) {
+                Rect union = unionVolumeDesktopSampleRects();
+                if (union == null || union.isEmpty()) union = sampleRect;
+                s.menuRegion.set(union);
+                syncVolumeDesktopMenuRegion(union);
+                if (!s.sessionOpen) openSessionIfNeeded(host, s);
+                else DesktopBackdropClient.updateMenuRect(union);
+            } else if (s.pinMenuRegion) {
+                if (!s.sessionOpen) openSessionIfNeeded(host, s);
+            } else if (!sampleRect.isEmpty()) {
+                s.menuRegion.set(sampleRect);
                 if (!s.sessionOpen) {
                     openSessionIfNeeded(host, s);
                 } else {
-                    DesktopBackdropClient.updateMenuRect(hostRect);
+                    DesktopBackdropClient.updateMenuRect(sampleRect);
                 }
             } else {
                 openSessionIfNeeded(host, s);
@@ -312,13 +383,14 @@ public final class BehindDisplayCapture {
                 newPlate = region != null;
             }
             if (region != null && !region.isRecycled()) {
-                boolean need = newPlate || force
+                boolean need = volume || newPlate || force
                         || Float.compare(blurPx, s.lastBlurPx) != 0
                         || s.cache == null || s.cache.isRecycled()
-                        || s.cache.getWidth() != width || s.cache.getHeight() != height
+                        || s.cache.getWidth() != sampleW || s.cache.getHeight() != sampleH
                         || geometryChanged;
                 if (need) {
-                    applyDesktopRegionFrame(host, s, region, loc[0], loc[1], width, height, blurPx);
+                    applyDesktopRegionFrame(host, s, region,
+                            sampleX, sampleY, sampleW, sampleH, blurPx);
                 }
                 return;
             }
@@ -404,6 +476,7 @@ public final class BehindDisplayCapture {
         s.forceOnce = false;
         s.stickyDesktop = false;
         s.noCaptureFallback = false;
+        s.pinMenuRegion = false;
         closeSessionIfNeeded(s);
         if (!anyDesktopSessionOpen()) {
             DesktopBackdropClient.forceCloseSession();
@@ -431,16 +504,42 @@ public final class BehindDisplayCapture {
         }
     }
 
-    /** Stop every float-menu ashmem session (dismiss / float closed). */
+    /** Stop every float-menu ashmem session (dismiss / float closed). Leaves volume hosts. */
     public static void stopAllSessions() {
+        stopHostsWithTag(TAG_MENU);
+    }
+
+    /** Stop volume-panel ashmem / capture sessions (dialog dismissed). */
+    public static void stopVolumeSessions() {
+        stopHostsWithTag(TAG_VOLUME);
+    }
+
+    private static void stopHostsWithTag(String tag) {
         java.util.ArrayList<View> hosts;
         synchronized (HOSTS) {
             hosts = new java.util.ArrayList<>(HOSTS.keySet());
         }
         for (View host : hosts) {
-            if (host != null) stopStreaming(host);
+            if (host != null && hasTag(host, tag)) stopStreaming(host);
         }
-        DesktopBackdropClient.forceCloseSession();
+        if (!anyDesktopSessionOpen()) {
+            DesktopBackdropClient.forceCloseSession();
+        }
+    }
+
+    static boolean anyMenuDesktopSessionOpen() {
+        int epoch = DesktopBackdropClient.sessionEpoch();
+        synchronized (HOSTS) {
+            for (Map.Entry<View, HostState> e : HOSTS.entrySet()) {
+                View host = e.getKey();
+                HostState s = e.getValue();
+                if (s != null && s.sessionOpen && s.openEpoch == epoch
+                        && isSysUiMenuGlass(host)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -545,18 +644,39 @@ public final class BehindDisplayCapture {
         Canvas canvas = new Canvas(out);
         canvas.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
 
-        // Launcher now samples the current glass rect — prefer exact 1:1 blit.
-        if (rw == width && rh == height) {
+        int srcL = 0;
+        int srcT = 0;
+        if (!s.menuRegion.isEmpty()) {
+            srcL = screenX - s.menuRegion.left;
+            srcT = screenY - s.menuRegion.top;
+        }
+
+        // Exact host-sized plate at origin (float menu): 1:1 blit.
+        if (rw == width && rh == height && srcL == 0 && srcT == 0) {
             canvas.drawBitmap(region, 0f, 0f, BITMAP_PAINT);
             return out;
         }
 
-        // Size mismatch (transient): 1:1 top-left copy, never scale/stretch.
-        int srcW = Math.min(rw, width);
-        int srcH = Math.min(rh, height);
+        int srcR = srcL + width;
+        int srcB = srcT + height;
+        srcL = Math.max(0, srcL);
+        srcT = Math.max(0, srcT);
+        srcR = Math.min(rw, srcR);
+        srcB = Math.min(rh, srcB);
+        if (srcR <= srcL || srcB <= srcT) {
+            int srcW = Math.min(rw, width);
+            int srcH = Math.min(rh, height);
+            canvas.drawBitmap(region,
+                    new Rect(0, 0, srcW, srcH),
+                    new RectF(0f, 0f, srcW, srcH),
+                    BITMAP_PAINT);
+            return out;
+        }
+        int dstW = srcR - srcL;
+        int dstH = srcB - srcT;
         canvas.drawBitmap(region,
-                new Rect(0, 0, srcW, srcH),
-                new RectF(0f, 0f, srcW, srcH),
+                new Rect(srcL, srcT, srcR, srcB),
+                new RectF(0f, 0f, dstW, dstH),
                 BITMAP_PAINT);
         return out;
     }
@@ -570,6 +690,82 @@ public final class BehindDisplayCapture {
         if (w <= 0 || h <= 0) return false;
         canvas.drawBitmap(cache, null, new RectF(0f, 0f, w, h), BITMAP_PAINT);
         return true;
+    }
+
+    /** On-screen rect of the volume glass plate (seekbar pill, or the full settings button). */
+    private static Rect volumeGlassScreenRect(View host) {
+        if (host == null) return new Rect();
+        int[] loc = new int[2];
+        host.getLocationOnScreen(loc);
+        Rect pill = readOutLineRect(host);
+        if (pill != null && pill.width() >= 2 && pill.height() >= 2) {
+            return new Rect(loc[0] + pill.left, loc[1] + pill.top,
+                    loc[0] + pill.right, loc[1] + pill.bottom);
+        }
+        // ColorOS 13/14 VolumeSeekBar: no mOutLineRect, and the vertical layout rotates the
+        // seekbar -90° so the pill must be mapped through the view matrix to screen space.
+        if (isOs14VolumeSeekBar(host)) {
+            Rect screenPill = Os14VolumePanelGlass.pillScreenRect(host);
+            if (screenPill != null && !screenPill.isEmpty()) return screenPill;
+        }
+        int w = host.getWidth();
+        int h = host.getHeight();
+        if (w <= 0 || h <= 0) return new Rect();
+        return new Rect(loc[0], loc[1], loc[0] + w, loc[1] + h);
+    }
+
+    static boolean isOs14VolumeSeekBar(View host) {
+        if (host == null) return false;
+        String name = host.getClass().getName();
+        return name != null && name.contains("VolumeSeekBar") && !name.contains("Oplus");
+    }
+
+    private static Rect readOutLineRect(View host) {
+        if (host == null) return null;
+        try {
+            for (Class<?> c = host.getClass(); c != null; c = c.getSuperclass()) {
+                try {
+                    java.lang.reflect.Field f = c.getDeclaredField("mOutLineRect");
+                    f.setAccessible(true);
+                    Object v = f.get(host);
+                    if (v instanceof Rect && !((Rect) v).isEmpty()) return new Rect((Rect) v);
+                } catch (NoSuchFieldException ignored) { }
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
+    private static Rect unionVolumeDesktopSampleRects() {
+        Rect union = new Rect();
+        int epoch = DesktopBackdropClient.sessionEpoch();
+        synchronized (HOSTS) {
+            for (Map.Entry<View, HostState> e : HOSTS.entrySet()) {
+                View host = e.getKey();
+                HostState s = e.getValue();
+                if (host == null || s == null || !isVolumeGlass(host)) continue;
+                if (!s.streaming || s.mode != Mode.DESKTOP) continue;
+                if (s.sessionOpen && s.openEpoch != epoch) continue;
+                if (!host.isAttachedToWindow() || !host.isShown()) continue;
+                Rect r = volumeGlassScreenRect(host);
+                if (r.isEmpty()) continue;
+                if (union.isEmpty()) union.set(r);
+                else union.union(r);
+            }
+        }
+        return union;
+    }
+
+    private static void syncVolumeDesktopMenuRegion(Rect union) {
+        if (union == null || union.isEmpty()) return;
+        synchronized (HOSTS) {
+            for (Map.Entry<View, HostState> e : HOSTS.entrySet()) {
+                View host = e.getKey();
+                HostState s = e.getValue();
+                if (host == null || s == null || !isVolumeGlass(host)) continue;
+                if (s.mode != Mode.DESKTOP || !s.streaming) continue;
+                s.menuRegion.set(union);
+            }
+        }
     }
 
     private static Bitmap captureDisplayCrop(CaptureRequest req) {

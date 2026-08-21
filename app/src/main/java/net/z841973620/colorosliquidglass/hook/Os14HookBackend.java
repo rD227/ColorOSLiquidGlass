@@ -26,6 +26,7 @@ import net.z841973620.colorosliquidglass.GlassConfig;
 import net.z841973620.colorosliquidglass.glass.DesktopBackdropSampler;
 import net.z841973620.colorosliquidglass.glass.GlassDrawable;
 import net.z841973620.colorosliquidglass.glass.GlassInstaller;
+import net.z841973620.colorosliquidglass.glass.Os14VolumePanelGlass;
 import net.z841973620.colorosliquidglass.glass.WallpaperScaleTracker;
 import net.z841973620.colorosliquidglass.ipc.DesktopBackdropClient;
 import net.z841973620.colorosliquidglass.ipc.DesktopBackdropHub;
@@ -108,7 +109,63 @@ public final class Os14HookBackend implements HookBackend {
                     } catch (Throwable ignored2) { }
                 });
         hookKeyguardAffordanceGlass(cl);
+        hookSystemUiVolumeGlass(cl);
         DesktopBackdropClient.warmUp();
+    }
+
+    /**
+     * ColorOS 13/14 volume dialog glass. Lock screen samples lock content in-process
+     * (same as ColorOS 16); every other page uses captureScreen via
+     * {@link net.z841973620.colorosliquidglass.glass.BehindDisplayCapture#bindApp}.
+     */
+    private void hookSystemUiVolumeGlass(ClassLoader cl) {
+        final String implClass = "com.oplus.systemui.volume.OplusVolumeDialogImpl";
+        after(cl, implClass, "initDialog", this::scheduleOs14VolumeGlass);
+        after(cl, implClass, "showH", this::scheduleOs14VolumeGlass);
+        after(cl, implClass, "expandPanel", this::scheduleOs14VolumeGlass);
+        after(cl, implClass, "updateRowsH", this::scheduleOs14VolumeGlass);
+        after(cl, implClass, "dismissH", this::releaseOs14VolumeGlass);
+        try {
+            Class<?> sb = Class.forName(
+                    "com.oplus.systemui.volume.VolumeSeekBar", false, cl);
+            for (Method m : sb.getDeclaredMethods()) {
+                if (!"onDraw".equals(m.getName()) || m.getParameterCount() != 1
+                        || m.isBridge() || m.isSynthetic()) {
+                    continue;
+                }
+                hookOnce(m, chain -> {
+                    try {
+                        Object self = chain.getThisObject();
+                        Object arg = chain.getArgs().isEmpty() ? null : chain.getArgs().get(0);
+                        if (self instanceof View && arg instanceof Canvas
+                                && Os14VolumePanelGlass.handleSeekBarOnDraw(
+                                        (View) self, (Canvas) arg)) {
+                            return null;
+                        }
+                    } catch (Throwable ignored) { }
+                    return chain.proceed();
+                });
+            }
+        } catch (Throwable e) {
+            log(5, "Os14 VolumeSeekBar.onDraw hook unavailable", e);
+        }
+    }
+
+    private void scheduleOs14VolumeGlass(Object dialogImpl) {
+        try {
+            if (!enabled() || dialogImpl == null) return;
+            Os14VolumePanelGlass.schedule(dialogImpl, currentConfig());
+        } catch (Throwable e) {
+            log(5, "Os14 scheduleOs14VolumeGlass failed", e);
+        }
+    }
+
+    private void releaseOs14VolumeGlass(Object dialogImpl) {
+        try {
+            Os14VolumePanelGlass.release(dialogImpl);
+        } catch (Throwable t) {
+            log(5, "Os14 volume glass release failed", t);
+        }
     }
 
     /**
@@ -666,6 +723,7 @@ public final class Os14HookBackend implements HookBackend {
 
     private boolean drawPreviewGlassOnCanvas(Object preview, Canvas canvas) {
         if (canvas == null || preview == null) return false;
+        logFolderGlassCall(preview);
         Object folderHost = resolveFolderIcon(preview);
         if (folderHost != null && isFolderOpen(folderHost)) return false;
 
@@ -707,13 +765,33 @@ public final class Os14HookBackend implements HookBackend {
         int save = canvas.save();
         try {
             canvas.translate(plate.left, plate.top);
-            GlassInstaller.forceCapturePreviewPlate(host);
-            // Without a backdrop frame, GlassDrawable paints a bright translucent fallback.
-            if (!GlassInstaller.hasBackdropFrame(host)) {
-                invalidatePreviewDelegate(preview);
-                return false;
+            // Never force-capture here. forceCapturePreviewPlate runs root.draw() which
+            // re-enters this FolderIcon's dispatchDraw in the same frame (the 2x callsInFrame
+            // seen in logcat) and hides the folder (owner.setAlpha(0)) for the capture,
+            // producing the disappearing / stacked-glass symptoms. The backdrop is sampled by
+            // BackdropCapture.onPreDraw after register() marks the host dirty, so the plate
+            // gets a frame one traversal later without re-entering the draw pass.
+            // Without a frame yet, GlassDrawable.draw paints its translucent fallback instead
+            // of leaving an empty plate (which would look like the folder vanished).
+            if (canvas.isHardwareAccelerated()) {
+                glass.draw(canvas);
+            } else {
+                // CellLayout draw passes can hand a software canvas here; AGSL can only run
+                // on hardware, which would fall back to GlassDrawable's white translucent
+                // rounded rect (white plate under the glass). Render through the HW
+                // rasterizer and blit the glass bitmap instead.
+                int gw = Math.max(1, plate.width());
+                int gh = Math.max(1, plate.height());
+                android.graphics.Bitmap rendered = GlassInstaller.renderDrawableHw(glass, gw, gh);
+                if (rendered != null && !rendered.isRecycled()) {
+                    canvas.drawBitmap(rendered, null,
+                            new android.graphics.RectF(0f, 0f, gw, gh),
+                            new android.graphics.Paint(
+                                    android.graphics.Paint.FILTER_BITMAP_FLAG
+                                            | android.graphics.Paint.ANTI_ALIAS_FLAG));
+                    if (!rendered.isRecycled()) rendered.recycle();
+                }
             }
-            glass.draw(canvas);
             return true;
         } catch (Throwable ignored) {
             return false;
@@ -800,6 +878,41 @@ public final class Os14HookBackend implements HookBackend {
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
             host.layout(left, top, left + width, top + height);
             applyPreviewRadius(preview, host, plate);
+            // Sample the create-folder backdrop after the host is attached and laid out.
+            // Posting defers the root.draw out of the drawBackground stack (a synchronous
+            // capture here hid the whole desktop); the preview-backdrop flag keeps the
+            // folder glass out of the sample.
+            final ImageView parkHost = host;
+            final ViewGroup parkCellLayout = cellLayout;
+            final int parkCellX = cellX;
+            final int parkCellY = cellY;
+            final Rect parkPlate = plate;
+            try {
+                parkHost.post(() -> {
+                    if (parkHost.isAttachedToWindow() && parkHost.getWidth() > 0
+                            && parkHost.getHeight() > 0) {
+                        int[] cellPointNow = new int[2];
+                        if (!cellToPoint(parkCellLayout, parkCellX, parkCellY, cellPointNow)) {
+                            return;
+                        }
+                        // Map the plate's CellLayout-local rect into window space with the
+                        // full CellLayout/Workspace transform (scale/scroll). This is the
+                        // same space the glass is drawn in. The parked DragLayer host's own
+                        // getLocationInWindow misses those transforms, so sampling it drifts
+                        // the backdrop toward the bottom-right.
+                        android.graphics.Matrix m = new android.graphics.Matrix();
+                        parkCellLayout.transformMatrixToGlobal(m);
+                        float[] pts = new float[]{
+                                parkPlate.left + cellPointNow[0],
+                                parkPlate.top + cellPointNow[1],
+                                parkPlate.right + cellPointNow[0],
+                                parkPlate.bottom + cellPointNow[1]};
+                        m.mapPoints(pts);
+                        GlassInstaller.forceCapturePreviewPlateAt(parkHost,
+                                Math.round(pts[0]), Math.round(pts[1]));
+                    }
+                });
+            } catch (Throwable ignored) { }
         } catch (Throwable e) {
             log(5, "Os14 placeCreateFolderCaptureHost failed", e);
         }
@@ -949,6 +1062,49 @@ public final class Os14HookBackend implements HookBackend {
                     View.MeasureSpec.makeMeasureSpec(Math.max(1, right - left), View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(Math.max(1, bottom - top), View.MeasureSpec.EXACTLY));
             host.layout(left, top, right, bottom);
+            // While the folder is pushed to another cell (drop reflow), its host window
+            // position changes every frame. Re-sample the backdrop at the new position so
+            // the glass shows the new cell content live. This runs inside the preview
+            // backdrop-capture flag (see BackdropCapture.capture), so the drawBackground
+            // hook returns early and this does not re-enter the folder draw.
+            // A detached host (create-folder before it is parked on DragLayer) reports
+            // window (0,0) — never sample that or the screen top-left is baked in.
+            if (!host.isAttachedToWindow()) return;
+            int[] gl = new int[2];
+            host.getLocationInWindow(gl);
+            long now = android.os.SystemClock.uptimeMillis();
+            if (now - lastFolderGlassRecapture < 40L) return;
+            Integer lastX = folderGlassWindowX.get(host);
+            Integer lastY = folderGlassWindowY.get(host);
+            if (lastX == null || lastY == null || lastX != gl[0] || lastY != gl[1]) {
+                folderGlassWindowX.put(host, gl[0]);
+                folderGlassWindowY.put(host, gl[1]);
+                lastFolderGlassRecapture = now;
+                GlassInstaller.forceCapturePreviewPlate(host);
+            }
+            logFolderGlassPosition(host, left, top, right, bottom);
+        } catch (Throwable ignored) { }
+    }
+
+    private final Map<View, Integer> folderGlassWindowX =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private final Map<View, Integer> folderGlassWindowY =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private long lastFolderGlassRecapture;
+
+    private long lastFolderGlassPosLog;
+
+    private void logFolderGlassPosition(View host, int left, int top, int right, int bottom) {
+        try {
+            long now = android.os.SystemClock.uptimeMillis();
+            if (now - lastFolderGlassPosLog < 250L) return;
+            lastFolderGlassPosLog = now;
+            int[] gl = new int[2];
+            host.getLocationInWindow(gl);
+            log(3, "folderGlassPos local=" + left + "," + top + "," + right + "," + bottom
+                    + " window=" + gl[0] + "," + gl[1]
+                    + " hostSize=" + host.getWidth() + "x" + host.getHeight()
+                    + " hasFrame=" + GlassInstaller.hasBackdropFrame(host));
         } catch (Throwable ignored) { }
     }
 
@@ -1008,6 +1164,33 @@ public final class Os14HookBackend implements HookBackend {
             }
         } catch (Throwable ignored) { }
         return null;
+    }
+
+    /** True while this preview is delegated onto a CellLayout (folder-accept). */
+    private boolean isPreviewDrawingDelegated(Object preview) {
+        return preview != null && field(preview, "mDrawingDelegate") != null;
+    }
+
+    private long folderGlassCalls;
+    private long folderGlassLastLog;
+
+    /** Rate-limited context for the Cos14 folder glass double-draw diagnosis. */
+    private void logFolderGlassCall(Object preview) {
+        try {
+            folderGlassCalls++;
+            long now = android.os.SystemClock.uptimeMillis();
+            if (now - folderGlassLastLog < 300L) return;
+            folderGlassLastLog = now;
+            String hostName = "";
+            Object host = resolveFolderIcon(preview);
+            if (host instanceof View) hostName = host.getClass().getSimpleName();
+            Object fh = field(preview, "mDrawingDelegate");
+            boolean delegated = fh != null;
+            log(3, "folderGlass host=" + hostName
+                    + " delegated=" + delegated
+                    + " capturing=" + GlassInstaller.isPreviewBackdropCapturing()
+                    + " calls=" + folderGlassCalls);
+        } catch (Throwable ignored) { }
     }
 
     private static boolean cellToPoint(Object cellLayout, int cellX, int cellY, int[] out) {

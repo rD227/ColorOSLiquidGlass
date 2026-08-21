@@ -554,6 +554,16 @@ final class DesktopIconOverlay {
         Object bgViewObj = fieldValue(preview, "mBgView");
         View bgView = bgViewObj instanceof View ? (View) bgViewObj : null;
         GlassDrawable glass = bgView != null ? GlassInstaller.get(bgView) : null;
+        if (glass == null) {
+            // Cos14 has no mBgView — the capture host is the invisible ImageView child of
+            // the FolderIcon. Fall back to it so accept plates stay visible under drag glass.
+            View folderIcon = resolveFolderIconFromPreview(preview);
+            View capture = folderIcon != null ? findFolderGlassCaptureHost(folderIcon) : null;
+            if (capture != null) {
+                bgView = capture;
+                glass = GlassInstaller.get(capture);
+            }
+        }
         if (glass == null) return;
 
         // Create-folder: park mBgView on CellLayout at the plate so forceCapture samples the
@@ -577,7 +587,11 @@ final class DesktopIconOverlay {
         final int h = bg.height();
         final View captureHost = bgView;
         final GlassDrawable plate = glass;
-        if (captureHost != null && captureHost.getParent() != null
+        // Backdrop is the folder's own resting plate sample — reuse it once warmed. Never
+        // forceCapture every frame: the drag glass sample runs continuously, and each
+        // forceCapture re-rasterizes the whole tree (visible as flicker on the accept plate).
+        if (captureHost != null && !GlassInstaller.hasBackdropFrame(captureHost)
+                && captureHost.getParent() != null
                 && captureHost.getWidth() > 0 && captureHost.getHeight() > 0) {
             try {
                 GlassInstaller.forceCapturePreviewPlate(captureHost);
@@ -1091,6 +1105,12 @@ final class DesktopIconOverlay {
      * Cos16 {@code transX/Y} are FolderIcon-space and already include basePreviewOffset;
      * plateDest is the live {@code getBackgroundRect} (offset shifts while accept-scaled).
      * Map with OEM draw under a FolderIcon→plate transform so glyphs stay aligned.
+     * <p>
+     * Cos14: glyph params are FolderIcon content space ({@code PreviewItemManager.draw}
+     * translates by {@code basePreviewOffset} then {@code -previewStyleBoundOffset}).
+     * {@code getBackgroundRect} is accept-scaled, so mapping with it offsets the glyphs
+     * up-left; use the resting-plate geometry instead so the glyphs scale with the accept
+     * plate and stay centered.
      */
     private static void paintFolderPreviewIconsIntoPlate(View folderIcon, RectF plateDest,
             Canvas canvas) {
@@ -1098,19 +1118,39 @@ final class DesktopIconOverlay {
         Object manager = fieldValue(folderIcon, "mPreviewItemManager");
         if (manager == null) return;
         Object background = fieldValue(folderIcon, "mBackground");
+        boolean cos14 = ColorOsVersion.detect() == ColorOsVersion.Flavor.LEGACY_13_14;
         float originX = floatField(background, "basePreviewOffsetX");
         float originY = floatField(background, "basePreviewOffsetY");
         float srcW = 0f;
         float srcH = 0f;
-        Object rectObj = invokeNoArgs(background, "getBackgroundRect");
-        if (rectObj instanceof Rect) {
-            Rect bg = (Rect) rectObj;
-            if (bg.width() > 0 && bg.height() > 0) {
-                // Accept grow centers the plate via getOffsetX/Y — use that as glyph space origin.
-                originX = bg.left;
-                originY = bg.top;
-                srcW = bg.width();
-                srcH = bg.height();
+        if (cos14) {
+            // Resting plate = previewSize * styleBoundFactor centered at basePreviewOffset.
+            float previewPx = floatField(background, "previewSize");
+            float factor = 1f;
+            Object fObj = fieldValue(background, "mStyleBoundFactor");
+            if (fObj instanceof Number) factor = ((Number) fObj).floatValue();
+            if (previewPx > 0f && factor > 0f) {
+                float restSize = previewPx * factor;
+                if (restSize > 0f) {
+                    srcW = restSize;
+                    srcH = restSize;
+                    originX = floatField(background, "basePreviewOffsetX")
+                            - (restSize - previewPx) / 2f;
+                    originY = floatField(background, "basePreviewOffsetY")
+                            - (restSize - previewPx) / 2f;
+                }
+            }
+        }
+        if (srcW <= 0f) {
+            Object rectObj = invokeNoArgs(background, "getBackgroundRect");
+            if (rectObj instanceof Rect) {
+                Rect bg = (Rect) rectObj;
+                if (bg.width() > 0 && bg.height() > 0) {
+                    originX = bg.left;
+                    originY = bg.top;
+                    srcW = bg.width();
+                    srcH = bg.height();
+                }
             }
         }
         if (srcW <= 0f || srcH <= 0f) {
@@ -1178,9 +1218,19 @@ final class DesktopIconOverlay {
                 bitmap = rasterizeDrawable(drawable, Math.round(size), Math.round(size));
             }
             if (bitmap == null || bitmap.isRecycled()) continue;
-            // trans already includes basePreviewOffset — subtract live plate origin only.
-            float left = plateDest.left + (transX - originX) * sx;
-            float top = plateDest.top + (transY - originY) * sy;
+            // Cos14 glyphs are FolderIcon content space: PreviewItemManager.draw translates
+            // by basePreviewOffset then -previewStyleBoundOffset before transX/Y. Map them
+            // relative to the resting-plate origin so they align with the accept plate.
+            float baseOffX = 0f;
+            float baseOffY = 0f;
+            float styleOff = 0f;
+            if (cos14) {
+                baseOffX = floatField(background, "basePreviewOffsetX");
+                baseOffY = floatField(background, "basePreviewOffsetY");
+                styleOff = readPreviewStyleBoundOffset(folderIcon);
+            }
+            float left = plateDest.left + (baseOffX - styleOff + transX - originX) * sx;
+            float top = plateDest.top + (baseOffY - styleOff + transY - originY) * sy;
             float w = size * scale * sx;
             float h = size * scale * sy;
             BITMAP_PAINT.setAlpha(255);
@@ -1188,12 +1238,27 @@ final class DesktopIconOverlay {
         }
     }
 
+    /** Cos14 preview glyphs sit at basePreviewOffset - previewStyleBoundOffset. */
+    private static float readPreviewStyleBoundOffset(View folderIcon) {
+        try {
+            Object rule = fieldValue(folderIcon, "mPreviewLayoutRule");
+            if (rule == null) return 0f;
+            Object off = invokeNoArgs(rule, "getPreviewStyleBoundOffset");
+            if (off instanceof Number) return ((Number) off).floatValue();
+        } catch (Throwable ignored) { }
+        return 0f;
+    }
+
     /**
-     * Screen rect for a delegated plate. Prefer the parked capture host's matrix so ashmem
-     * dest matches the backdrop sample; fall back to CellLayout cell math.
+     * Screen rect for a delegated plate. Cos16 parks mBgView on CellLayout and paints the
+     * accept plate there, so its global matrix is authoritative. Cos14 has no mBgView — the
+     * FolderIcon capture host stays at the resting position while CellLayout paints the
+     * scaled/offset accept plate, so always map through CellLayout cell math (matches the
+     * backdrop region the drag-glass sample captured).
      */
     private static RectF plateDestOnScreen(View bgView, View cellLayout, int[] cellPoint, Rect bg) {
-        if (bgView != null && bgView.getParent() == cellLayout
+        boolean cos14 = ColorOsVersion.detect() == ColorOsVersion.Flavor.LEGACY_13_14;
+        if (!cos14 && bgView != null && bgView.getParent() == cellLayout
                 && bgView.getWidth() > 0 && bgView.getHeight() > 0) {
             Matrix localToGlobal = new Matrix();
             bgView.transformMatrixToGlobal(localToGlobal);
@@ -2746,22 +2811,41 @@ final class DesktopIconOverlay {
                 && cached.width == width && cached.height == height) {
             return cached.bitmap;
         }
+        boolean cos14 = ColorOsVersion.detect() == ColorOsVersion.Flavor.LEGACY_13_14;
         final View drawTarget = content;
-        Bitmap rendered = GlassHwRasterizer.render(width, height, drawTarget::draw);
-        if (rendered == null || rendered.isRecycled() || isMostlyEmpty(rendered)) {
-            if (rendered != null && !rendered.isRecycled()) rendered.recycle();
+        Bitmap rendered;
+        if (cos14) {
+            // Cos14: HW raster of widget views flowers under menu glass (same as folders /
+            // app shortcuts) — always software.
             rendered = rasterizeViewSoftware(drawTarget, width, height);
+        } else {
+            rendered = GlassHwRasterizer.render(width, height, drawTarget::draw);
+            if (rendered == null || rendered.isRecycled() || isMostlyEmpty(rendered)) {
+                if (rendered != null && !rendered.isRecycled()) rendered.recycle();
+                rendered = rasterizeViewSoftware(drawTarget, width, height);
+            }
         }
         if ((rendered == null || rendered.isRecycled() || isMostlyEmpty(rendered))
                 && drawTarget != host) {
             if (rendered != null && !rendered.isRecycled()) rendered.recycle();
-            rendered = GlassHwRasterizer.render(host.getWidth(), host.getHeight(), host::draw);
-            if (rendered != null && !isMostlyEmpty(rendered)) {
-                width = host.getWidth();
-                height = host.getHeight();
-            } else if (rendered != null) {
-                rendered.recycle();
-                rendered = null;
+            if (cos14) {
+                rendered = rasterizeViewSoftware(host, host.getWidth(), host.getHeight());
+                if (rendered != null && !isMostlyEmpty(rendered)) {
+                    width = host.getWidth();
+                    height = host.getHeight();
+                } else if (rendered != null) {
+                    rendered.recycle();
+                    rendered = null;
+                }
+            } else {
+                rendered = GlassHwRasterizer.render(host.getWidth(), host.getHeight(), host::draw);
+                if (rendered != null && !isMostlyEmpty(rendered)) {
+                    width = host.getWidth();
+                    height = host.getHeight();
+                } else if (rendered != null) {
+                    rendered.recycle();
+                    rendered = null;
+                }
             }
         }
         if (rendered == null || rendered.isRecycled() || isMostlyEmpty(rendered)) {
@@ -3048,8 +3132,8 @@ final class DesktopIconOverlay {
         boolean glassReady = false;
         if (popupSample && cos14 && liveGlass && plateHost != null) {
             // Cos14-only: plate ImageView is INVISIBLE — PreDraw never warms it. Warm backdrop
-            // once, then one-shot AGSL into sticky snap. Never use this for Cos16 — nested HW
-            // of the live mBgView is what shows folder glass under desktop/folder menus.
+            // once, then software-composite the plate (HW raster of the Cos14 folder plate
+            // flowers the screen under menu glass — see 5ca1ad5). Never HW here.
             if (!GlassInstaller.hasBackdropFrame(plateHost)) {
                 try {
                     GlassInstaller.forceCapturePreviewPlate(plateHost);
@@ -3057,7 +3141,8 @@ final class DesktopIconOverlay {
             }
             plateSource = BackdropCapture.snapshotOf(plateHost);
             if (GlassInstaller.hasBackdropFrame(plateHost)) {
-                rendered = hwFolderComposite(folderIcon, plateHost, drawW, drawH, drawName);
+                rendered = softFolderComposite(folderIcon, plateHost, plateSource, drawW, drawH,
+                        drawName);
                 glassReady = rendered != null && !rendered.isRecycled();
             } else {
                 // No backdrop yet — glyphs-only soft; leave glassReady false to retry next pump.

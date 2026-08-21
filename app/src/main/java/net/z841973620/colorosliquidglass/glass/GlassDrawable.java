@@ -195,25 +195,47 @@ public final class GlassDrawable extends Drawable {
     }
 
     @Override public void draw(Canvas canvas) {
+        if (LockscreenContentOverlay.isSampling()) return;
         // View.drawBackground may reset bounds to the full view after setBackground.
         // COUI submenu open grows RoundFrameLayout.f15656b — re-apply before sampling.
         applyCouiRevealBoundsIfPresent();
         // Lock-screen capsule: OEM blur is clipped to pathProvider clipRect (pill size).
         // CapsuleBackgroundView itself stays notification-row sized during list→capsule.
         applyCapsuleClipBoundsIfPresent();
+        applyVolumeSeekBarBoundsIfPresent();
         Rect bounds = getBounds();
         if (bounds.isEmpty()) return;
         int save = canvas.save();
         canvas.clipPath(shape);
         boolean drewBackdrop = false;
-        boolean sysUiLive = BehindDisplayCapture.isSysUiMenuGlass(owner);
+        boolean sysUiLive = BehindDisplayCapture.isSysUiLiveGlass(owner);
         Bitmap snapshot = sysUiLive
                 ? BehindDisplayCapture.currentFrame(owner)
                 : (backdrop == null ? null : backdrop.bitmap());
         float[] sampleScale = sysUiLive
                 ? new float[] { 1f, 1f }
                 : (backdrop == null ? new float[] { 1f, 1f } : backdrop.sampleScale());
-        if (canvas.isHardwareAccelerated() && runtimeShader != null
+        // ColorOS 13/14 volume seekbar: the vertical layout rotates the view -90° so the
+        // pill (a horizontal strip locally) is a vertical strip on screen. The AGSL
+        // sampleOrigin/sampleScale cannot express a 90° rotation, so draw the captured
+        // screen pill directly — the rotated canvas maps it back to the correct orientation.
+        boolean rotatedVolume = sysUiLive
+                && BehindDisplayCapture.isVolumeGlass(owner)
+                && Math.abs(owner.getRotation()) >= 0.5f
+                && BehindDisplayCapture.isOs14VolumeSeekBar(owner);
+        if (rotatedVolume && snapshot != null && !snapshot.isRecycled()) {
+            try {
+                Bitmap blurred = blurredBackdrop(snapshot, effectiveShaderBlurRadius());
+                if (blurred != null && !blurred.isRecycled()) {
+                    glassPaint.setShader(null);
+                    glassPaint.setAlpha(alpha);
+                    canvas.drawBitmap(blurred, null,
+                            new RectF(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                            glassPaint);
+                    drewBackdrop = true;
+                }
+            } catch (Throwable ignored) { }
+        } else if (canvas.isHardwareAccelerated() && runtimeShader != null
                 && snapshot != null && !snapshot.isRecycled()) {
             try {
                 float blurPx = effectiveShaderBlurRadius();
@@ -234,18 +256,32 @@ public final class GlassDrawable extends Drawable {
                 // so the plate tracks the reveal; (0,0) when bounds cover the view.
                 float originX = 0f;
                 float originY = 0f;
-                if (owner != null) {
-                    int ow = owner.getWidth();
-                    int oh = owner.getHeight();
-                    if (ow > 0 && oh > 0
-                            && (bounds.left != 0 || bounds.top != 0
-                            || bounds.width() != ow || bounds.height() != oh)) {
-                        originX = bounds.left;
-                        originY = bounds.top;
+                float scaleX = sampleScale[0];
+                float scaleY = sampleScale[1];
+                boolean snapshotMatchesBounds = snapshot.getWidth() == bounds.width()
+                        && snapshot.getHeight() == bounds.height();
+                if (!snapshotMatchesBounds) {
+                    if (snapshot.getWidth() < bounds.width()
+                            || snapshot.getHeight() < bounds.height()) {
+                        // Accept-grow plate: backdrop was sampled at the resting host size
+                        // while the glass is drawn at the scaled (larger) size. Shrink the
+                        // sampling scale so the backdrop maps 1:1 onto the plate — otherwise
+                        // the texture is squeezed to the top-left and the edges CLAMP.
+                        scaleX = snapshot.getWidth() / (float) bounds.width();
+                        scaleY = snapshot.getHeight() / (float) bounds.height();
+                    } else if (owner != null) {
+                        int ow = owner.getWidth();
+                        int oh = owner.getHeight();
+                        if (ow > 0 && oh > 0
+                                && (bounds.left != 0 || bounds.top != 0
+                                || bounds.width() != ow || bounds.height() != oh)) {
+                            originX = bounds.left;
+                            originY = bounds.top;
+                        }
                     }
                 }
                 runtimeShader.setFloatUniform("sampleOrigin", originX, originY);
-                runtimeShader.setFloatUniform("sampleScale", sampleScale[0], sampleScale[1]);
+                runtimeShader.setFloatUniform("sampleScale", scaleX, scaleY);
                 // float4 must use the 4-float overload; float[] is for float array uniforms.
                 runtimeShader.setFloatUniform("cornerRadii",
                         corner[0], corner[1], corner[2], corner[3]);
@@ -364,6 +400,35 @@ public final class GlassDrawable extends Drawable {
         setBounds(clip);
     }
 
+    /**
+     * Volume seekbar OEM blur is bound to {@code mOutLineRect} (the pill), not the full view.
+     * Keep glass on that pill so the plate matches the indicator.
+     */
+    private void applyVolumeSeekBarBoundsIfPresent() {
+        if (owner == null || !BehindDisplayCapture.isVolumeGlass(owner)) return;
+        Object outline = fieldOf(owner, "mOutLineRect");
+        if (!(outline instanceof Rect)) return;
+        Rect pill = (Rect) outline;
+        if (pill.width() < 2 || pill.height() < 2) return;
+        Object radiusObj = fieldOf(owner, "mCornerRadius");
+        if (!(radiusObj instanceof Number) || ((Number) radiusObj).floatValue() <= 0f) {
+            radiusObj = fieldOf(owner, "mOutLineRadius");
+        }
+        if (!(radiusObj instanceof Number) || ((Number) radiusObj).floatValue() <= 0f) {
+            radiusObj = fieldOf(owner, "mCurBackgroundRadius");
+        }
+        if (radiusObj instanceof Number) {
+            float r = ((Number) radiusObj).floatValue();
+            if (r > 0f) setCornerRadii(r, r, r, r);
+        }
+        Rect cur = getBounds();
+        if (cur.left == pill.left && cur.top == pill.top
+                && cur.right == pill.right && cur.bottom == pill.bottom) {
+            return;
+        }
+        setBounds(new Rect(pill));
+    }
+
     private static Rect readCapsuleClipRect(View bg) {
         try {
             Object helper = invokeNoArg(bg, "getCapsuleHelper");
@@ -446,7 +511,7 @@ public final class GlassDrawable extends Drawable {
     private float effectiveShaderBlurRadius() {
         // SysUI float menus: blur is applied on the DESKTOP crop worker / APP capture worker.
         // Skip a second CPU blur on the draw thread to keep latency down.
-        if (BehindDisplayCapture.isSysUiMenuGlass(owner)) return 0f;
+        if (BehindDisplayCapture.isSysUiLiveGlass(owner)) return 0f;
         return blurRadiusPx();
     }
 

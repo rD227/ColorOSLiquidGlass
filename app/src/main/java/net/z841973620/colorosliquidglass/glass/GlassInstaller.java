@@ -83,6 +83,17 @@ public final class GlassInstaller {
         BackdropCapture.markLockWallpaperOnly(view);
     }
 
+    /** Drop a previous wallpaper-only mark (e.g. volume bar leaving the lock screen). */
+    public static void clearWallpaperOnly(View view) {
+        BackdropCapture.clearWallpaperOnly(view);
+        BackdropCapture.clearLockContent(view);
+    }
+
+    /** Lock-screen volume: wallpaper plus in-process clock / notification views. */
+    public static void markLockContent(View view) {
+        BackdropCapture.markLockContent(view);
+    }
+
     /** Clear all drag overlay seeds and folder raster caches after finger-up. */
     public static void clearDragOverlays() {
         BackdropCapture.clearAllOverlaySources();
@@ -177,9 +188,28 @@ public final class GlassInstaller {
         }
     }
 
+    /** Force-captures a preview plate backdrop at an explicit window rect (see
+     *  {@link BackdropCapture#forceCaptureAtWindow}). */
+    public static void forceCapturePreviewPlateAt(View view, int winLeft, int winTop) {
+        if (view == null) return;
+        beginPreviewBackdropCapture();
+        try {
+            BackdropCapture.forceCaptureAtWindow(view, winLeft, winTop);
+        } finally {
+            endPreviewBackdropCapture();
+        }
+    }
+
     /** True when a useful backdrop frame exists (avoids GlassDrawable's bright translucent fallback). */
     public static boolean hasBackdropFrame(View view) {
         return BackdropCapture.snapshotOf(view) != null;
+    }
+
+    /** HW-rasterizes a drawable so AGSL glass renders on a software canvas. */
+    public static android.graphics.Bitmap renderDrawableHw(
+            final android.graphics.drawable.Drawable drawable, int width, int height) {
+        if (drawable == null || width <= 0 || height <= 0) return null;
+        return GlassHwRasterizer.render(width, height, hwCanvas -> drawable.draw(hwCanvas));
     }
 
     /**
@@ -214,6 +244,8 @@ public final class GlassInstaller {
             WeakReference<GlassDrawable> reference = INSTALLED.remove(view);
             GlassDrawable glass = reference == null ? null : reference.get();
             BehindDisplayCapture.stopStreaming(view);
+            BackdropCapture.clearWallpaperOnly(view);
+            BackdropCapture.clearLockContent(view);
             BackdropCapture.unregister(view);
             if (glass != null && view.getBackground() == glass) {
                 view.setBackground(null);
