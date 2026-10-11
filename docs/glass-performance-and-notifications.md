@@ -70,8 +70,12 @@ RGB 保留 35% 的颜色滤镜。纯白像素变为约 RGB 89，保留纹理、�
 
 ## 5. Release 签名
 
-版本为 1.3.1（versionCode 20）。本地 `keystore.properties` 配置仓库根目录的
+当前版本为 1.3.2（versionCode 21）。本地 `keystore.properties` 配置仓库根目录的
 `coloros-liquid-glass-release.jks`，别名为 `colorosliquidglass`。
 密钥与含密码的配置文件均被 Git 忽略。以后使用同一套密钥生成更新包。
 
-这是一把新生成的发布密钥，不同于手机现有版本的签名；仅切换为 release 构建不会消除签名差异。
+沿用 1.3.1 的发布密钥。该密钥不同于此前的上游/调试包签名，不能直接覆盖签名不同的安装包。
+
+1.3.2 已完成 Release 编译及 APK 签名验证；连接的一加 PLK110 上两项设备探针均通过。
+夜间纯白底测试像素与不透明白字的对比约为 7.00:1，淡出 alpha 及主题/锁屏切换检查通过。
+探针不替代最终通知界面的视觉验收，本轮未自动安装 APK 或重启 SystemUI。
