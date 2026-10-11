@@ -32,14 +32,6 @@ public final class GlassPerformanceProbe {
         source.setPixel(128, 128, 0xffffffff);
         check(source.getGenerationId() != generation, "producer update must change cache revision");
 
-        PageCapturePolicy policy = new PageCapturePolicy();
-        check(!policy.moved(0, 0), "first frame must capture");
-        check(policy.moved(80, 0), "page movement should reuse texture");
-        check(policy.moved(512, 0), "fling movement should reuse texture");
-        check(!policy.moved(512, 0), "settled page must recapture");
-        check(policy.moved(480, 0), "reverse drag should reuse texture");
-        check(!policy.moved(480, 0), "cancelled drag must recapture");
-        check(policy.moved(480, 64), "vertical movement should reuse texture");
         first.recycle(); second.recycle(); clear.recycle();
 
         long[] full = new long[12], small = new long[12];
@@ -56,7 +48,7 @@ public final class GlassPerformanceProbe {
             if (i >= 0) { full[i] = elapsed; small[i] = reducedElapsed; }
         }
         Arrays.sort(full); Arrays.sort(small);
-        System.out.println("PASS: source ownership, repeatability, downsampling, zero blur, page settle");
+        System.out.println("PASS: source ownership, repeatability, downsampling, zero blur");
         System.out.println("512x384 radius32 median: full=" + full[6]/1e6
                 + "ms reduced=" + small[6]/1e6 + "ms (blur only, not end-to-end FPS)");
         source.recycle();

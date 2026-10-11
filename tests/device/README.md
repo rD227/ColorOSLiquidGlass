@@ -2,7 +2,7 @@
 
 `GlassPerformanceProbe` exercises the real Android bitmap implementation. It checks that
 blur does not mutate or progressively degrade a producer frame, verifies reduced texture
-dimensions, and checks paging/settling decisions. Its timing output measures only blur,
+dimensions. Its timing output measures only blur,
 not UI frame rate.
 
 Set `JAVA_HOME` to JDK 17 and `ANDROID_HOME` to an Android SDK with API/build-tools 35.
@@ -14,7 +14,6 @@ New-Item -ItemType Directory -Force $probe | Out-Null
 & "$env:JAVA_HOME/bin/javac.exe" -encoding UTF-8 -source 17 -target 17 `
   -cp "$env:ANDROID_HOME/platforms/android-35/android.jar" -d $probe `
   app/src/main/java/net/z841973620/colorosliquidglass/glass/BackdropBlur.java `
-  app/src/main/java/net/z841973620/colorosliquidglass/glass/PageCapturePolicy.java `
   tests/device/GlassPerformanceProbe.java
 if ($LASTEXITCODE) { throw 'Probe compilation failed' }
 $classes = Get-ChildItem $probe -Recurse -Filter '*.class' | ForEach-Object FullName
@@ -31,5 +30,5 @@ if ($LASTEXITCODE) { throw 'Device regression probe failed' }
 Notification integration still requires checking expanded/grouped cards, swipe dismissal,
 lock/unlock with different wallpapers, and the module toggle on the installed build.
 The new ordinary-card renderer samples wallpaper, not the foreground app's live surface.
-Paging keeps the host's existing OEM transform; it avoids CPU recapture while scrolling
-rather than moving a separate glass overlay directly from raw finger coordinates.
+Paging keeps the host's existing OEM transform and the normal backdrop capture schedule.
+The experimental hold-until-settled texture policy was reverted after visible jumps on device.
