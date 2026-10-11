@@ -72,6 +72,11 @@ public final class NotificationCardGlass {
             GlassInstaller.forceCapture(view);
         }
         GlassDrawable glass = state.glass;
+        // Replacing the OEM background also bypasses its dark material. Restore contrast
+        // here, after refraction, without changing the shared wallpaper or notification text.
+        // Re-evaluate on draw: SystemUI can retain the same row across theme/lock changes.
+        glass.setColorFilter(NotificationGlassAppearance.backdropFilter(
+                locked, view.getResources().getConfiguration().uiMode));
         glass.setCornerRadii(radii[0], radii[2], radii[4], radii[6]);
         glass.setBounds(left, 0, left + width, bottom);
         glass.setAlpha(original.getAlpha());

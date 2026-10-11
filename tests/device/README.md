@@ -14,7 +14,8 @@ New-Item -ItemType Directory -Force $probe | Out-Null
 & "$env:JAVA_HOME/bin/javac.exe" -encoding UTF-8 -source 17 -target 17 `
   -cp "$env:ANDROID_HOME/platforms/android-35/android.jar" -d $probe `
   app/src/main/java/net/z841973620/colorosliquidglass/glass/BackdropBlur.java `
-  tests/device/GlassPerformanceProbe.java
+  app/src/main/java/net/z841973620/colorosliquidglass/glass/NotificationGlassAppearance.java `
+  tests/device/GlassPerformanceProbe.java tests/device/NotificationAppearanceProbe.java
 if ($LASTEXITCODE) { throw 'Probe compilation failed' }
 $classes = Get-ChildItem $probe -Recurse -Filter '*.class' | ForEach-Object FullName
 & "$env:JAVA_HOME/bin/java.exe" -cp "$env:ANDROID_HOME/build-tools/35.0.0/lib/d8.jar" `
@@ -25,6 +26,8 @@ if ($LASTEXITCODE) { throw 'DEX compilation failed' }
 if ($LASTEXITCODE) { throw 'Probe upload failed' }
 & "$env:ANDROID_HOME/platform-tools/adb.exe" shell 'CLASSPATH=/data/local/tmp/colg-performance-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.GlassPerformanceProbe'
 if ($LASTEXITCODE) { throw 'Device regression probe failed' }
+& "$env:ANDROID_HOME/platform-tools/adb.exe" shell 'CLASSPATH=/data/local/tmp/colg-performance-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.NotificationAppearanceProbe'
+if ($LASTEXITCODE) { throw 'Notification appearance probe failed' }
 ```
 
 Notification integration still requires checking expanded/grouped cards, swipe dismissal,
@@ -32,3 +35,8 @@ lock/unlock with different wallpapers, and the module toggle on the installed bu
 The new ordinary-card renderer samples wallpaper, not the foreground app's live surface.
 Paging keeps the host's existing OEM transform and the normal backdrop capture schedule.
 The experimental hold-until-settled texture policy was reverted after visible jumps on device.
+
+`NotificationAppearanceProbe` checks a white wallpaper pixel against white text in unlocked
+night mode, preserves row fade alpha, and reuses one paint through lock/unlock and day/night
+transitions. It tests the material filter, not the full OEM shader, final screenshot contrast,
+or semi-transparent notification text. Check those visually after installation.

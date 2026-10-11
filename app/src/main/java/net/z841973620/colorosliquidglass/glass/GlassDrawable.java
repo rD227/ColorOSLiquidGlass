@@ -582,6 +582,11 @@ public final class GlassDrawable extends Drawable {
         invalidateSelf();
     }
     @Override public int getAlpha() { return alpha; }
-    @Override public void setColorFilter(ColorFilter colorFilter) { glassPaint.setColorFilter(colorFilter); invalidateSelf(); }
+    @Override public void setColorFilter(ColorFilter colorFilter) {
+        if (glassPaint.getColorFilter() == colorFilter) return;
+        glassPaint.setColorFilter(colorFilter);
+        fallbackPaint.setColorFilter(colorFilter);
+        invalidateSelf();
+    }
     @SuppressWarnings("deprecation") @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
 }
