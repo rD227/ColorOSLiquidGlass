@@ -12,6 +12,21 @@ import android.graphics.Bitmap;
 public final class BackdropBlur {
     private BackdropBlur() {}
 
+    /** Independent low-resolution result: never blur a producer's reusable frame in place. */
+    public static Bitmap blurCopy(Bitmap src, float radiusPx) {
+        // Keep about two samples per blur radius; beyond 8x reduction small details alias.
+        float reduction = Math.max(1f, Math.min(8f, radiusPx / 2f));
+        int width = Math.max(1, Math.round(src.getWidth() / reduction));
+        int height = Math.max(1, Math.round(src.getHeight() / reduction));
+        Bitmap result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas canvas = new android.graphics.Canvas(result);
+        canvas.drawBitmap(src, null, new android.graphics.Rect(0, 0, width, height),
+                new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG));
+        int radius = Math.round(radiusPx * width / src.getWidth());
+        if (radius > 0) stackBlur(result, Math.min(radius, 64));
+        return result;
+    }
+
     /**
      * @param radiusPx blur radius in pixels; {@code <= 0} returns {@code src} unchanged
      * @return blurred ARGB_8888 bitmap (may be {@code src} mutated in-place when mutable)

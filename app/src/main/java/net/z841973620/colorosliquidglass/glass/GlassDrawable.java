@@ -141,6 +141,7 @@ public final class GlassDrawable extends Drawable {
     private Bitmap cachedSnapshotSource;
     private Bitmap cachedBlurredSnapshot;
     private float cachedBlurRadiusPx = -1f;
+    private int cachedSnapshotGeneration;
     private BitmapShader cachedImageShader;
     private boolean shaderFailureLogged;
     private int alpha = 255;
@@ -280,6 +281,9 @@ public final class GlassDrawable extends Drawable {
                         }
                     }
                 }
+                // The blur texture stays small; scale sampling coordinates instead of upscaling it.
+                scaleX *= shaderBitmap.getWidth() / (float) snapshot.getWidth();
+                scaleY *= shaderBitmap.getHeight() / (float) snapshot.getHeight();
                 runtimeShader.setFloatUniform("sampleOrigin", originX, originY);
                 runtimeShader.setFloatUniform("sampleScale", scaleX, scaleY);
                 // float4 must use the 4-float overload; float[] is for float array uniforms.
@@ -541,13 +545,17 @@ public final class GlassDrawable extends Drawable {
         }
         if (cachedBlurredSnapshot != null && !cachedBlurredSnapshot.isRecycled()
                 && cachedSnapshotSource == snapshot
+                && cachedSnapshotGeneration == snapshot.getGenerationId()
                 && Math.abs(cachedBlurRadiusPx - blurPx) < 0.25f) {
             return cachedBlurredSnapshot;
         }
         recycleBlurredCache();
-        Bitmap blurred = BackdropBlur.blur(snapshot, blurPx);
-        if (blurred == null || blurred == snapshot) return snapshot;
+        // Radius is expressed in view pixels, while captures may already be downsampled.
+        float sourceScale = owner.getWidth() > 0
+                ? snapshot.getWidth() / (float) owner.getWidth() : 1f;
+        Bitmap blurred = BackdropBlur.blurCopy(snapshot, blurPx * sourceScale);
         cachedSnapshotSource = snapshot;
+        cachedSnapshotGeneration = snapshot.getGenerationId();
         cachedBlurredSnapshot = blurred;
         cachedBlurRadiusPx = blurPx;
         return blurred;
