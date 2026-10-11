@@ -3,6 +3,7 @@
 local.properties
 keystore.properties
 **/build/
+**/.cxx/
 *.iml
 *.apk
 *.jks
