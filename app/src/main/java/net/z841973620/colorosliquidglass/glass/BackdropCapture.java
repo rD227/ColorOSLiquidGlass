@@ -1462,9 +1462,19 @@ import java.util.WeakHashMap;
 
     static void markWallpaperOnly(View target, int which) {
         if (target == null) return;
-        WALLPAPER_ONLY.put(target, which == WallpaperManager.FLAG_LOCK
-                ? WallpaperManager.FLAG_LOCK
-                : WallpaperManager.FLAG_SYSTEM);
+        int source = which == WallpaperManager.FLAG_LOCK
+                ? WallpaperManager.FLAG_LOCK : WallpaperManager.FLAG_SYSTEM;
+        Integer previous = WALLPAPER_ONLY.put(target, source);
+        if (previous == null || previous != source) {
+            synchronized (CAPTURES) {
+                BackdropCapture capture = CAPTURES.get(target);
+                if (capture != null) {
+                    // A reused notification view can cross the keyguard boundary without resizing.
+                    capture.validFrame = false;
+                    capture.dirty = true;
+                }
+            }
+        }
     }
 
     private static boolean wantsLockWallpaper(View target) {

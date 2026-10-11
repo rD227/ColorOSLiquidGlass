@@ -9,6 +9,7 @@ public final class GlassConfig {
     public boolean hideDesktopIcons = false;
     /** Long-press / Overview / float app-option menus use LiquidGlass when true. */
     public boolean modifyMenuStyle = true;
+    public boolean notificationGlassEnabled = true;
     public float glassIntensity = 1f;
     public float blurRadius = 0f;
     public float refractionHeight = .2f;
@@ -23,6 +24,7 @@ public final class GlassConfig {
         c.enabled = p.getBoolean("enabled", true);
         c.hideDesktopIcons = p.getBoolean("hide_desktop_icons", false);
         c.modifyMenuStyle = p.getBoolean("modify_menu_style", true);
+        c.notificationGlassEnabled = p.getBoolean("notification_glass_enabled", true);
         c.glassIntensity = p.getFloat("glass_intensity", 1f);
         c.blurRadius = p.getFloat("blur_radius", 0f);
         c.refractionHeight = p.getFloat("refraction_height", .2f);
@@ -49,6 +51,7 @@ public final class GlassConfig {
         return editor.putBoolean("enabled", enabled)
                 .putBoolean("hide_desktop_icons", hideDesktopIcons)
                 .putBoolean("modify_menu_style", modifyMenuStyle)
+                .putBoolean("notification_glass_enabled", notificationGlassEnabled)
                 .putFloat("glass_intensity", glassIntensity)
                 .putFloat("blur_radius", blurRadius)
                 .putFloat("refraction_height", refractionHeight)

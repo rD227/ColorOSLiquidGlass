@@ -32,6 +32,7 @@ import net.z841973620.colorosliquidglass.glass.DesktopBackdropSampler;
 import net.z841973620.colorosliquidglass.glass.GlassDrawable;
 import net.z841973620.colorosliquidglass.glass.GlassInstaller;
 import net.z841973620.colorosliquidglass.glass.LauncherAshmemMode;
+import net.z841973620.colorosliquidglass.glass.NotificationCardGlass;
 import net.z841973620.colorosliquidglass.glass.TaskContentOverlay;
 import net.z841973620.colorosliquidglass.glass.WallpaperScaleTracker;
 import net.z841973620.colorosliquidglass.glass.VolumePanelGlass;
@@ -113,6 +114,7 @@ public final class ModuleMain extends XposedModule {
                 + " major=" + ColorOsVersion.majorVersion()
                 + " useLegacyApis=" + useLegacy);
         if (pkg.equals("com.android.systemui")) {
+            hookNotificationCardGlass(cl);
             // e9e3cd0 behavior: always mount the full FlexibleMenu / BehindDisplayCapture chain.
             // Class-not-found only logs; never let OS14 COUI stub replace this path on ColorOS 16.
             hookSystemUiFloatMenus(cl);
@@ -150,6 +152,31 @@ public final class ModuleMain extends XposedModule {
             return true;
         } catch (Throwable ignored) {
             return false;
+        }
+    }
+
+    private void hookNotificationCardGlass(ClassLoader cl) {
+        try {
+            Class<?> background = Class.forName(
+                    "com.android.systemui.statusbar.notification.row.NotificationBackgroundView",
+                    false, cl);
+            NotificationCardGlass renderer = new NotificationCardGlass(background);
+            Method draw = background.getDeclaredMethod("onDraw", Canvas.class);
+            hookOnce(draw, chain -> {
+                GlassConfig config = currentConfig();
+                View view = (View) chain.getThisObject();
+                if (!config.enabled || !config.notificationGlassEnabled) {
+                    renderer.remove(view);
+                    return chain.proceed();
+                }
+                renderer.draw(view, (Canvas) chain.getArg(0), config);
+                return null;
+            });
+            log(4, TAG, "Notification card background glass hook installed");
+        } catch (ReflectiveOperationException e) {
+            // OEM SystemUI is an external API: keep its original rendering if its
+            // notification geometry contract differs from the supported layout.
+            log(5, TAG, "Notification card glass unavailable: incompatible background API", e);
         }
     }
 
@@ -2390,6 +2417,11 @@ public final class ModuleMain extends XposedModule {
                         java.util.List<Object> args = chain.getArgs();
                         if (args != null && !args.isEmpty() && args.get(0) instanceof View
                                 && GlassInstaller.get((View) args.get(0)) != null) {
+                            GlassConfig config = currentConfig();
+                            if (!config.enabled || !config.notificationGlassEnabled) {
+                                GlassInstaller.uninstall((View) args.get(0));
+                                return chain.proceed();
+                            }
                             // Glass is already the background — skip OEM blur / solid fill.
                             return null;
                         }
@@ -2403,8 +2435,13 @@ public final class ModuleMain extends XposedModule {
     }
 
     private void applyLockScreenCapsuleGlass(Object bgObj) {
-        if (!enabled() || !(bgObj instanceof View)) return;
+        if (!(bgObj instanceof View)) return;
         final View bg = (View) bgObj;
+        GlassConfig config = currentConfig();
+        if (!config.enabled || !config.notificationGlassEnabled) {
+            if (GlassInstaller.get(bg) != null) GlassInstaller.uninstall(bg);
+            return;
+        }
         if (!isClassOrSubclass(bg,
                 "com.oplus.systemui.notification.lockscreen.capsule.CapsuleBackgroundView")) {
             return;
