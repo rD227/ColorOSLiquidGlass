@@ -363,6 +363,8 @@ import java.util.WeakHashMap;
     private float lastHierarchyAlpha = Float.NaN;
     private float lastRootAlpha = Float.NaN;
     private float lastWallpaperScale = Float.NaN;
+    private final PageCapturePolicy pageCapturePolicy = new PageCapturePolicy();
+    private boolean pageTextureHeld;
     private int lastWorkspaceScrollX = Integer.MIN_VALUE;
     private int lastWorkspaceScrollY = Integer.MIN_VALUE;
     private float bitmapScaleX = 1f;
@@ -598,6 +600,24 @@ import java.util.WeakHashMap;
 
         // Task-menu opens with SCALE 0.9→1.0. Read prior scale before geometry update so we
         // detect the settle frame (a ~0.99 sample must not freeze when scale hits 1.0).
+        // Folder textures need no CPU recapture for every cylinder/cube page transform.
+        // Let the host move its existing texture and refresh once the page settles.
+        View workspace = isFolderIconView(owner) ? findWorkspaceAncestor(owner) : null;
+        if (workspace != null && dragViewAncestor(target) == null) {
+            boolean paging = pageCapturePolicy.moved(workspace.getScrollX(), workspace.getScrollY());
+            if (paging && validFrame && target.getWidth() == lastTargetW
+                    && target.getHeight() == lastTargetH) {
+                pageTextureHeld = true;
+                dirty = true;
+                target.postInvalidateOnAnimation();
+                return true;
+            }
+        }
+        if (pageTextureHeld) {
+            pageTextureHeld = false;
+            dirty = true;
+            skipCaptureFromSelfInvalidate = false;
+        }
         float scaleBefore = lastHierarchyScale;
         boolean geometryChanged = updateGeometryState(target, owner, root);
         if (geometryChanged) dirty = true;
