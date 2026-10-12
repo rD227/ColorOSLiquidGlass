@@ -17,6 +17,8 @@ The script uploads the APK as a classpath dependency under `/data/local/tmp`; it
 install/enable the module or restart Launcher/SystemUI. `SharedWallpaperProbe` exercises
 GPU RenderEffect output, production AGSL, source/radius/size cache invalidation, retained
 texture lifetime, perspective/bounds/zoom coordinates, and folder/menu/drag route selection.
+It also renders a uniform gray wallpaper with optics enabled: the flat face must remain
+uniform across internal diagonals, while the edge must retain rim lighting.
 
 
 Notification integration still requires checking expanded/grouped cards, swipe dismissal,
@@ -36,3 +38,8 @@ wallpaper points across 16 frames. It includes odd crop dimensions and a one-pix
 source. Single-step bilinear downsampling failed with ranges 255/26/33; area filtering
 reduces those fixtures to 0/2/4 (0–255 channel values). This limits spatial aliasing;
 it does not establish that every OEM animation has correct coordinate mapping.
+
+With no Android device attached, run `python tests/host/test_glass_rim.py`. It evaluates the
+actual AGSL rim expression against flat-interior, boundary and medial-axis lighting
+invariants. The pre-1.3.4 expression fails all three cases. This host check does not compile
+or execute AGSL on a GPU; the uniform-wallpaper device check still needs a connected device.

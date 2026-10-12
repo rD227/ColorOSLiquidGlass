@@ -173,11 +173,32 @@ public final class SharedWallpaperProbe {
         check(updatedPixels.getPixel(256, 96) == Color.RED, "updated source must be visible");
         Bitmap resized = cache.get(drawable, 256, 192, 0);
         check(resized != updated && resized.getWidth() == 256, "root resize must invalidate");
+        // Uniform wallpaper must stay uniform on the flat face even with optics enabled.
+        source.eraseColor(Color.rgb(128, 128, 128));
+        Bitmap gray = cache.get(drawable, 512, 192, 0);
+        RuntimeShader litShader = glassShader(gray);
+        litShader.setFloatUniform("refractionHeight", 12);
+        litShader.setFloatUniform("refractionAmount", 10);
+        litShader.setFloatUniform("glassIntensity", 1);
+        litShader.setFloatUniform("depthEffect", 1);
+        litShader.setFloatUniform("reflectionIntensity", 1);
+        Paint litPaint = new Paint(); litPaint.setShader(litShader);
+        Bitmap lit = GpuBackdropTexture.render(128, 96, 0,
+                canvas -> canvas.drawRect(0, 0, 128, 96, litPaint));
+        Bitmap litPixels = lit.copy(Bitmap.Config.ARGB_8888, false);
+        int face = Color.red(litPixels.getPixel(64, 48));
+        for (int y = 20; y < 76; y++) for (int x = 20; x < 108; x++) {
+            check(Math.abs(Color.red(litPixels.getPixel(x, y)) - face) <= 1,
+                    "flat face has a directional lighting seam at " + x + "," + y);
+        }
+        check(Math.abs(Color.red(litPixels.getPixel(1, 48)) - face) > 2,
+                "rim light must remain visible at the edge");
         // Previous immutable frames remain valid after replacement and renderer/reader cleanup.
         Bitmap retained = blurred.copy(Bitmap.Config.ARGB_8888, false);
         check(Color.red(retained.getPixel(255, 96)) == boundary, "old frame lifetime");
         for (Bitmap bitmap : new Bitmap[] {platePixels, movedPixels, clearPixels, updatedPixels,
-                retained, source, blurred, plate, moved, clear, updated, resized}) bitmap.recycle();
+                retained, source, blurred, plate, moved, clear, updated, resized,
+                gray, lit, litPixels}) bitmap.recycle();
         System.out.println("PASS: GPU blur, zero radius, cache reuse/invalidation, texture lifetime,");
         System.out.println("      production AGSL, moving texture coordinates, perspective/bounds/zoom,");
         System.out.println("      ordinary folder / popup / overlay / drag / drop routing");

@@ -100,30 +100,34 @@ public final class GlassDrawable extends Drawable {
                 float sd = sdRoundedRect(centered, halfSize, radius);
                 if (sd > 0.0) return half4(0.0);
 
-                float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
-                float2 normal = normalize(gradSdRoundedRect(centered, halfSize, gradRadius)
-                    + depthEffect * glassIntensity * normalize(centered + 0.0001));
-                half4 color;
-                if (refractionHeight <= 0.0 || refractionAmount <= 0.0 || -sd >= refractionHeight) {
-                    color = vibrant(coord);
-                } else {
-                    float d = circleMap(1.0 - (-sd / refractionHeight)) * refractionAmount;
-                    float2 refractedCoord = coord - d * normal;
-                    if (chromaticAberration <= 0.0) {
-                        color = vibrant(refractedCoord);
-                    } else {
-                        float intensity = ((centered.x * centered.y) / max(1.0, halfSize.x * halfSize.y));
-                        color = dispersed(refractedCoord, d * normal * intensity * chromaticAberration);
-                    }
-                }
-
                 float rimWidth = max(1.5, min(max(refractionHeight, 6.0), 18.0));
-                float rim = 1.0 - smoothstep(-rimWidth, 0.0, sd);
-                float2 lightDirection = normalize(float2(-0.72, -0.70));
-                float reflection = pow(max(dot(-normal, lightDirection), 0.0), 3.0);
-                float shade = pow(max(dot(normal, lightDirection), 0.0), 2.0);
-                color.rgb *= half(1.0 - shade * rim * 0.10 * glassIntensity);
-                color.rgb += half3(rim * (0.025 + reflection * 0.14 * reflectionIntensity) * glassIntensity);
+                // SDF is negative inside: the rim fades from 1 at the edge to 0 inward.
+                float rim = smoothstep(-rimWidth, 0.0, sd);
+                bool refracts = refractionHeight > 0.0 && refractionAmount > 0.0
+                    && -sd < refractionHeight;
+                half4 color = vibrant(coord);
+                // The SDF normal is discontinuous on the medial axes of a flat face.
+                // It describes the boundary, so only use it for rim light or edge refraction.
+                if (rim > 0.0 || refracts) {
+                    float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
+                    float2 normal = normalize(gradSdRoundedRect(centered, halfSize, gradRadius)
+                        + depthEffect * glassIntensity * normalize(centered + 0.0001));
+                    if (refracts) {
+                        float d = circleMap(1.0 - (-sd / refractionHeight)) * refractionAmount;
+                        float2 refractedCoord = coord - d * normal;
+                        if (chromaticAberration <= 0.0) {
+                            color = vibrant(refractedCoord);
+                        } else {
+                            float intensity = ((centered.x * centered.y) / max(1.0, halfSize.x * halfSize.y));
+                            color = dispersed(refractedCoord, d * normal * intensity * chromaticAberration);
+                        }
+                    }
+                    float2 lightDirection = normalize(float2(-0.72, -0.70));
+                    float reflection = pow(max(dot(-normal, lightDirection), 0.0), 3.0);
+                    float shade = pow(max(dot(normal, lightDirection), 0.0), 2.0);
+                    color.rgb *= half(1.0 - shade * rim * 0.10 * glassIntensity);
+                    color.rgb += half3(rim * (0.025 + reflection * 0.14 * reflectionIntensity) * glassIntensity);
+                }
                 color.a *= half(surfaceOpacity);
                 return color;
             }
