@@ -87,16 +87,13 @@ fun LiquidSlider(
                 visibilityThreshold = visibilityThreshold,
                 initialScale = 1f,
                 pressedScale = 1.5f,
-                onDragStarted = { position ->
+                onDragStarted = {
                     didDrag = false
-                    val fraction = (position.x / trackWidth).coerceIn(0f, 1f)
-                    dragValue = valueRange.start +
-                        (valueRange.endInclusive - valueRange.start) *
-                        if (isLtr) fraction else 1f - fraction
-                    emitValue(dragValue)
+                    // The pointer starts on the thumb: retain its value, not the touch offset.
+                    dragValue = value()
                 },
                 onDragStopped = {
-                    emitValue(dragValue)
+                    if (didDrag) emitValue(dragValue)
                 },
                 onDrag = { _, dragAmount ->
                     if (!didDrag) {
@@ -206,11 +203,6 @@ fun LiquidSlider(
                     }
                 )
                 .size(40f.dp, 24f.dp)
-        )
-
-        Box(
-            Modifier
-                .matchParentSize()
                 .then(dampedDragAnimation.modifier)
         )
     }
