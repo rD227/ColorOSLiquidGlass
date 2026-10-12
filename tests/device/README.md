@@ -23,6 +23,13 @@ Notification checks cover explicit shared-path opt-in, home/lock selection, igno
 wallpaper zoom, 60 moving frames without CPU capture buffers, and separate home/lock caches
 reused across multiple cards.
 
+`HeadsUpRouteProbe` uses a probe-only notification-row contract fixture to check ancestor
+lookup, heads-up and disappearing state, the independent toggle, live bind/unbind, shared
+volume FPS, and the disabled menu's forced-capture guard. The fixture is only in the probe DEX,
+never the APK. This does not validate the device's actual OEM row API or live surface exclusion.
+Kotlin probe compilation requires `kotlinc` on PATH. Test language/API 2.0 keeps metadata
+compatible with the existing SDK 35 D8; application build settings are unchanged.
+
 
 Notification integration still requires checking expanded/grouped cards, swipe dismissal,
 lock/unlock with different wallpapers, and the module toggle on the installed build.

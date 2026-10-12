@@ -215,9 +215,10 @@ public final class GlassDrawable extends Drawable {
         int save = canvas.save();
         canvas.clipPath(shape);
         boolean drewBackdrop = false;
-        boolean sysUiLive = BehindDisplayCapture.isSysUiLiveGlass(owner);
-        boolean sharedWallpaper = !sysUiLive && backdrop != null && backdrop.usesSharedWallpaper();
-        Bitmap snapshot = sharedWallpaper ? null : sysUiLive
+        boolean sampleBackdrop = backdropEnabled();
+        boolean sysUiLive = sampleBackdrop && BehindDisplayCapture.isSysUiLiveGlass(owner);
+        boolean sharedWallpaper = sampleBackdrop && !sysUiLive && backdrop != null && backdrop.usesSharedWallpaper();
+        Bitmap snapshot = !sampleBackdrop || sharedWallpaper ? null : sysUiLive
                 ? BehindDisplayCapture.currentFrame(owner)
                 : (backdrop == null ? null : backdrop.bitmap());
         float[] sampleScale = sysUiLive
@@ -547,6 +548,10 @@ public final class GlassDrawable extends Drawable {
     }
 
     int volumeBackdropFps() { return config.volumeBackdropFps; }
+
+    boolean backdropEnabled() {
+        return config.menuBackdropEnabled || !BackdropCapture.isMenuBackdrop(owner);
+    }
 
     /** Hot-update config from the module console without reinstalling the drawable. */
     void applyConfig(GlassConfig next) {

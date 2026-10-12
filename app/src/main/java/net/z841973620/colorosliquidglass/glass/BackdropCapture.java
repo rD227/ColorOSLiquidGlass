@@ -200,6 +200,8 @@ import java.util.WeakHashMap;
     /** Forces an immediate target-local capture, used while resize-frame geometry is animating. */
     static void forceCapture(View target) {
         if (target == null || target.getWidth() <= 0 || target.getHeight() <= 0) return;
+        GlassDrawable installed = GlassInstaller.get(target);
+        if (installed != null && !installed.backdropEnabled()) return;
         if (BehindDisplayCapture.isSysUiLiveGlass(target)) {
             BehindDisplayCapture.requestRefresh(target, true);
             return;
@@ -482,6 +484,8 @@ import java.util.WeakHashMap;
         if (desktopPopupPumpPosted) return;
         View target = targetRef.get();
         if (target == null || !target.isAttachedToWindow()) return;
+        GlassDrawable glass = GlassInstaller.get(target);
+        if (glass != null && !glass.backdropEnabled()) return;
         if (!isDesktopPopupGlass(target)) return;
         desktopPopupPumpPosted = true;
         try {
@@ -552,12 +556,8 @@ import java.util.WeakHashMap;
             dirty = true;
             desktopPopupSettling = true;
             skipCaptureFromSelfInvalidate = false;
-            // Open period: forceCapture beats mid-release PreDraw early-returns / freeze.
-            if (isDesktopPopupOpening(host)) {
-                try {
-                    forceCapture(host);
-                } catch (Throwable ignored) { }
-            }
+            // One capture in OnPreDraw; the pump only requests traversal. Capturing here
+            // as well repeated the same icon composite twice during opening/closing.
             try {
                 host.invalidate();
             } catch (Throwable ignored) { }
@@ -630,6 +630,11 @@ import java.util.WeakHashMap;
         View target = targetRef.get();
         View root = rootRef == null ? null : rootRef.get();
         if (target == null || root == null) return true;
+        GlassDrawable installed = GlassInstaller.get(target);
+        if (installed != null && !installed.backdropEnabled()) {
+            if (BehindDisplayCapture.isSysUiLiveGlass(target)) BehindDisplayCapture.stopStreaming(target);
+            return true;
+        }
         explicitWindowSample = false;
         // During resize-frame drawing ColorOS sets mBgView to INVISIBLE and paints on the
         // FolderIcon canvas instead. Keep sampling while the folder icon itself is shown.
@@ -1607,6 +1612,11 @@ import java.util.WeakHashMap;
     private static boolean isDesktopPopupGlass(View target) {
         Object tag = target == null ? null : target.getTag();
         return "colg_desktop_popup".equals(tag);
+    }
+
+    static boolean isMenuBackdrop(View target) {
+        return isDesktopPopupGlass(target) || BehindDisplayCapture.isSysUiMenuGlass(target)
+                || TaskContentOverlay.isTaskView(overlaySourceOf(target));
     }
 
     private void attach(View root) {
