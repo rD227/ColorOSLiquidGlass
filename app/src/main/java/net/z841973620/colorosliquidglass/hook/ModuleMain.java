@@ -33,6 +33,8 @@ import net.z841973620.colorosliquidglass.glass.GlassDrawable;
 import net.z841973620.colorosliquidglass.glass.GlassInstaller;
 import net.z841973620.colorosliquidglass.glass.LauncherAshmemMode;
 import net.z841973620.colorosliquidglass.glass.NotificationCardGlass;
+import net.z841973620.colorosliquidglass.glass.NotificationPlateDrawable;
+import net.z841973620.colorosliquidglass.glass.HeadsUpState;
 import net.z841973620.colorosliquidglass.glass.TaskContentOverlay;
 import net.z841973620.colorosliquidglass.glass.WallpaperScaleTracker;
 import net.z841973620.colorosliquidglass.glass.VolumePanelGlass;
@@ -115,6 +117,8 @@ public final class ModuleMain extends XposedModule {
                 + " useLegacyApis=" + useLegacy);
         if (pkg.equals("com.android.systemui")) {
             hookNotificationCardGlass(cl);
+            hookNotificationGroupHeader(cl);
+            hookFullscreenBanner(cl);
             // e9e3cd0 behavior: always mount the full FlexibleMenu / BehindDisplayCapture chain.
             // Class-not-found only logs; never let OS14 COUI stub replace this path on ColorOS 16.
             hookSystemUiFloatMenus(cl);
@@ -177,6 +181,72 @@ public final class ModuleMain extends XposedModule {
             // OEM SystemUI is an external API: keep its original rendering if its
             // notification geometry contract differs from the supported layout.
             log(5, TAG, "Notification card glass unavailable: incompatible background API", e);
+        }
+    }
+
+    private void hookNotificationGroupHeader(ClassLoader cl) {
+        try {
+            Class<?> extension = Class.forName(
+                    "com.oplus.systemui.statusbar.notification.stack.NotificationChildrenContainerExtImp", false, cl);
+            Class<?> row = Class.forName(
+                    "com.android.systemui.statusbar.notification.row.ExpandableNotificationRow", false, cl);
+            Method factory = extension.getDeclaredMethod("getHeaderBgDrawable", View.class, boolean.class, row);
+            Method radius = row.getMethod("getTopCornerRadius");
+            HeadsUpState detector = new HeadsUpState(cl);
+            hookOnce(factory, chain -> {
+                GlassConfig config = currentConfig();
+                View host = (View) chain.getArg(0);
+                View owner = (View) chain.getArg(2);
+                if (!config.enabled || !config.notificationGlassEnabled
+                        || (!config.headsUpGlassEnabled && detector.isHeadsUp(owner))) return chain.proceed();
+                // The OEM factory installs a separate blur drawable for headers. Replace that
+                // factory result directly, preserving NotificationChildrenContainer's clipping.
+                return new NotificationPlateDrawable(host, config, () -> detector.isHeadsUp(owner),
+                        () -> notificationCornerRadius(radius, owner), true);
+            });
+            log(4, TAG, "Notification group header glass hook installed");
+        } catch (ReflectiveOperationException e) {
+            log(5, TAG, "Notification group header API unavailable", e);
+        }
+    }
+
+    private static double notificationCornerRadius(Method method, View owner) {
+        try {
+            return ((Number) method.invoke(owner)).doubleValue();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Resolved notification corner API failed", e);
+        }
+    }
+
+    private void hookFullscreenBanner(ClassLoader cl) {
+        try {
+            Class<?> container = Class.forName(
+                    "com.oplus.systemui.notification.interruption.fullscreenbanner.view.FullScreenBannerContainer", false, cl);
+            Field bannerField = container.getDeclaredField("mFullScreenBanner");
+            Field backgroundField = container.getDeclaredField("mFullScreenBannerBg");
+            Field usesBlur = container.getDeclaredField("mUseBlurBannerBg");
+            bannerField.setAccessible(true);
+            backgroundField.setAccessible(true);
+            usesBlur.setAccessible(true);
+            hookOnce(container.getDeclaredMethod("onViewAttachedToWindow", View.class), chain -> {
+                GlassConfig config = currentConfig();
+                if (!config.enabled || !config.notificationGlassEnabled || !config.headsUpGlassEnabled) return chain.proceed();
+                Object self = chain.getThisObject();
+                View banner = (View) bannerField.get(self);
+                if (banner == null) return chain.proceed(); // OEM may attach before its content is assigned.
+                int radiusId = banner.getResources().getIdentifier("fullscreen_banner_corner_radius", "dimen", "com.android.systemui");
+                if (radiusId == 0) return chain.proceed(); // Different ROM: retain the original shape/material.
+                double radius = banner.getResources().getDimension(radiusId);
+                NotificationPlateDrawable drawable = new NotificationPlateDrawable(banner, config,
+                        () -> true, () -> radius, false);
+                backgroundField.set(self, drawable);
+                usesBlur.setBoolean(self, false);
+                banner.setBackground(drawable);
+                return null;
+            });
+            log(4, TAG, "Fullscreen landscape notification glass hook installed");
+        } catch (ReflectiveOperationException e) {
+            log(5, TAG, "Fullscreen notification API unavailable", e);
         }
     }
 
