@@ -19,6 +19,9 @@ GPU RenderEffect output, production AGSL, source/radius/size cache invalidation,
 texture lifetime, perspective/bounds/zoom coordinates, and folder/menu/drag route selection.
 It also renders a uniform gray wallpaper with optics enabled: the flat face must remain
 uniform across internal diagonals, while the edge must retain rim lighting.
+Notification checks cover explicit shared-path opt-in, home/lock selection, ignoring desktop
+wallpaper zoom, 60 moving frames without CPU capture buffers, and separate home/lock caches
+reused across multiple cards.
 
 
 Notification integration still requires checking expanded/grouped cards, swipe dismissal,

@@ -94,6 +94,7 @@ public final class NotificationCardGlass {
         State state = reference == null ? null : reference.get();
         if (state == null) {
             GlassInstaller.markWallpaperOnly(view);
+            BackdropCapture.markSharedWallpaper(view);
             state = new State(view, config);
             states.put(view, new WeakReference<>(state));
             view.addOnAttachStateChangeListener(state);

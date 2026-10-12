@@ -42,6 +42,13 @@ import java.util.WeakHashMap;
      */
     private static final Map<View, Integer> WALLPAPER_ONLY =
             Collections.synchronizedMap(new WeakHashMap<>());
+    /** Hosts explicitly opting into the shared texture (ordinary notification cards). */
+    private static final Map<View, Boolean> SHARED_WALLPAPER =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    static void markSharedWallpaper(View target) {
+        SHARED_WALLPAPER.put(target, Boolean.TRUE);
+    }
     /** Volume-on-lock: sample lock wallpaper plus in-process clock / notifications. */
     private static final Map<View, Boolean> LOCK_CONTENT =
             Collections.synchronizedMap(new WeakHashMap<>());
@@ -274,10 +281,14 @@ import java.util.WeakHashMap;
 
     boolean usesSharedWallpaper() {
         View target = targetRef.get();
-        return target != null && !explicitWindowSample && isFolderIconView(captureOwner(target))
+        boolean folder = target != null && isFolderIconView(captureOwner(target))
+                && !isWallpaperOnlyGlass(target);
+        boolean sharedCard = target != null && SHARED_WALLPAPER.containsKey(target)
+                && hasWallpaperOnlyMark(target);
+        return target != null && !explicitWindowSample && (folder || sharedCard)
                 && overlaySourceOf(target) == null && dragViewAncestor(target) == null
                 && !isDesktopPopupGlass(target)
-                && !isWallpaperOnlyGlass(target) && !isLockContentGlass(target);
+                && !isLockContentGlass(target);
     }
 
     /**
@@ -1475,6 +1486,7 @@ import java.util.WeakHashMap;
     static void clearWallpaperOnly(View target) {
         if (target == null) return;
         WALLPAPER_ONLY.remove(target);
+        SHARED_WALLPAPER.remove(target);
         LOCK_CONTENT.remove(target);
     }
 
@@ -1497,6 +1509,14 @@ import java.util.WeakHashMap;
                 }
             }
         }
+    }
+
+    static int wallpaperSource(View target) {
+        return wantsLockWallpaper(target) ? WallpaperManager.FLAG_LOCK : WallpaperManager.FLAG_SYSTEM;
+    }
+
+    static float sharedWallpaperZoom(View target) {
+        return hasWallpaperOnlyMark(target) ? 1f : WallpaperScaleTracker.current();
     }
 
     private static boolean wantsLockWallpaper(View target) {

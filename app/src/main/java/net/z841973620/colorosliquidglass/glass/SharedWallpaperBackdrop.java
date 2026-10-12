@@ -1,5 +1,6 @@
 package net.z841973620.colorosliquidglass.glass;
 
+import android.app.WallpaperManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
@@ -10,21 +11,22 @@ import android.view.View;
 
 import java.util.WeakHashMap;
 
-/** UI-thread owned, one root-sized wallpaper blur shared by ordinary desktop folder plates. */
+/** UI-thread owned wallpaper blurs shared by folders and ordinary notification cards. */
 final class SharedWallpaperBackdrop {
-    private static final WeakHashMap<View, TextureCache> ROOTS = new WeakHashMap<>();
+    private static final WeakHashMap<View, RootTextures> ROOTS = new WeakHashMap<>();
 
     private SharedWallpaperBackdrop() {}
 
     static Bitmap texture(View target, float radius) {
         View root = target.getRootView();
-        TextureCache cache = ROOTS.get(root);
-        if (cache == null) {
-            cache = new TextureCache();
-            ROOTS.put(root, cache);
+        RootTextures textures = ROOTS.get(root);
+        if (textures == null) {
+            textures = new RootTextures();
+            ROOTS.put(root, textures);
         }
+        TextureCache cache = textures.forSource(BackdropCapture.wallpaperSource(target));
         Drawable wallpaper = BackdropCapture.resolveWallpaperDrawable(target.getContext(), target);
-        if (wallpaper == null) throw new IllegalStateException("Launcher wallpaper is unavailable");
+        if (wallpaper == null) throw new IllegalStateException("Glass wallpaper is unavailable");
         return cache.get(wallpaper, root.getWidth(), root.getHeight(), radius);
     }
 
@@ -41,7 +43,17 @@ final class SharedWallpaperBackdrop {
             current = parent;
         }
         BackdropCoordinates.map(targetToRoot, left, top,
-                root.getWidth(), root.getHeight(), WallpaperScaleTracker.current(), values);
+                root.getWidth(), root.getHeight(), BackdropCapture.sharedWallpaperZoom(target), values);
+    }
+
+    /** Source selection changes on lock/unlock; keep both textures without cache thrashing. */
+    static final class RootTextures {
+        private final TextureCache home = new TextureCache();
+        private final TextureCache lock = new TextureCache();
+
+        TextureCache forSource(int source) {
+            return source == WallpaperManager.FLAG_LOCK ? lock : home;
+        }
     }
 
     /** No View reference: a weak root entry must not keep the window alive through its value. */

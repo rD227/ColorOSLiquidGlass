@@ -1,6 +1,7 @@
 package net.z841973620.colorosliquidglass.glass;
 
 import android.content.res.Resources;
+import android.app.WallpaperManager;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
@@ -99,6 +100,35 @@ public final class SharedWallpaperProbe {
         check(!capture.usesSharedWallpaper(), "drag needs local icon capture");
         drag.removeView(folder); root.addView(folder);
         check(capture.usesSharedWallpaper(), "drop must restore shared wallpaper");
+        View card = new View(context);
+        root.addView(card); card.layout(0, 0, 128, 96);
+        BackdropCapture.markWallpaperOnly(card);
+        BackdropCapture.markSharedWallpaper(card);
+        BackdropCapture cardCapture = BackdropCapture.register(card);
+        check(cardCapture.usesSharedWallpaper(), "notification card must share GPU wallpaper");
+        WallpaperScaleTracker.setImmediate(1.2f);
+        check(BackdropCapture.sharedWallpaperZoom(card) == 1f, "notification must ignore launcher zoom");
+        check(BackdropCapture.sharedWallpaperZoom(host) == 1.2f, "folder must retain launcher zoom");
+        WallpaperScaleTracker.setImmediate(1f);
+        check(BackdropCapture.wallpaperSource(card) == WallpaperManager.FLAG_SYSTEM, "unlocked source");
+        BackdropCapture.markLockWallpaperOnly(card);
+        check(cardCapture.usesSharedWallpaper(), "lock notification must still share texture");
+        check(BackdropCapture.wallpaperSource(card) == WallpaperManager.FLAG_LOCK, "locked source");
+        for (int i = 0; i < 60; i++) {
+            card.setTranslationY(i * .5f);
+            BackdropCapture.forceCapture(card);
+        }
+        for (String name : new String[] {"frontBitmap", "backBitmap"}) {
+            Field bitmap = BackdropCapture.class.getDeclaredField(name); bitmap.setAccessible(true);
+            check(bitmap.get(cardCapture) == null, "shared notification allocated CPU capture " + name);
+        }
+        BackdropCapture.markLockContent(card);
+        check(!cardCapture.usesSharedWallpaper(), "live lock content must retain content capture");
+        BackdropCapture.clearWallpaperOnly(card);
+        BackdropCapture.markWallpaperOnly(card);
+        check(!cardCapture.usesSharedWallpaper(), "ordinary wallpaper-only hosts must not opt in implicitly");
+        BackdropCapture.clearWallpaperOnly(card);
+        BackdropCapture.unregister(card);
         BackdropCapture.unregister(host);
     }
 
@@ -173,6 +203,20 @@ public final class SharedWallpaperProbe {
         check(updatedPixels.getPixel(256, 96) == Color.RED, "updated source must be visible");
         Bitmap resized = cache.get(drawable, 256, 192, 0);
         check(resized != updated && resized.getWidth() == 256, "root resize must invalidate");
+        SharedWallpaperBackdrop.RootTextures sources = new SharedWallpaperBackdrop.RootTextures();
+        Bitmap lockSource = Bitmap.createBitmap(512, 192, Bitmap.Config.ARGB_8888);
+        lockSource.eraseColor(Color.BLUE);
+        BitmapDrawable lockDrawable = new BitmapDrawable(Resources.getSystem(), lockSource);
+        Bitmap homeTexture = sources.forSource(WallpaperManager.FLAG_SYSTEM).get(drawable, 512, 192, 32);
+        Bitmap lockTexture = sources.forSource(WallpaperManager.FLAG_LOCK).get(lockDrawable, 512, 192, 32);
+        for (int i = 0; i < 12; i++) {
+            check(sources.forSource(WallpaperManager.FLAG_SYSTEM).get(drawable, 512, 192, 32)
+                    == homeTexture, "unlock must reuse home texture across cards");
+            check(sources.forSource(WallpaperManager.FLAG_LOCK).get(lockDrawable, 512, 192, 32)
+                    == lockTexture, "lock must reuse separate lock texture across cards");
+        }
+        Bitmap lockPixels = lockTexture.copy(Bitmap.Config.ARGB_8888, false);
+        check(lockPixels.getPixel(256, 96) == Color.BLUE, "lock wallpaper must not sample home texture");
         // Uniform wallpaper must stay uniform on the flat face even with optics enabled.
         source.eraseColor(Color.rgb(128, 128, 128));
         Bitmap gray = cache.get(drawable, 512, 192, 0);
@@ -191,16 +235,18 @@ public final class SharedWallpaperProbe {
             check(Math.abs(Color.red(litPixels.getPixel(x, y)) - face) <= 1,
                     "flat face has a directional lighting seam at " + x + "," + y);
         }
-        check(Math.abs(Color.red(litPixels.getPixel(1, 48)) - face) > 2,
+        // Right edge faces the reflected light; gray on the opposite shaded edge can
+        // coincidentally cancel the uniform rim lift and is not a highlight reference.
+        check(Color.red(litPixels.getPixel(126, 48)) - face > 2,
                 "rim light must remain visible at the edge");
         // Previous immutable frames remain valid after replacement and renderer/reader cleanup.
         Bitmap retained = blurred.copy(Bitmap.Config.ARGB_8888, false);
         check(Color.red(retained.getPixel(255, 96)) == boundary, "old frame lifetime");
         for (Bitmap bitmap : new Bitmap[] {platePixels, movedPixels, clearPixels, updatedPixels,
                 retained, source, blurred, plate, moved, clear, updated, resized,
-                gray, lit, litPixels}) bitmap.recycle();
+                gray, lit, litPixels, lockSource, homeTexture, lockTexture, lockPixels}) bitmap.recycle();
         System.out.println("PASS: GPU blur, zero radius, cache reuse/invalidation, texture lifetime,");
         System.out.println("      production AGSL, moving texture coordinates, perspective/bounds/zoom,");
-        System.out.println("      ordinary folder / popup / overlay / drag / drop routing");
+        System.out.println("      folder / popup / drag / notification routes, home/lock cache isolation");
     }
 }
