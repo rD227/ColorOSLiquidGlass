@@ -165,7 +165,7 @@ public final class ModuleMain extends XposedModule {
             hookOnce(draw, chain -> {
                 GlassConfig config = currentConfig();
                 View view = (View) chain.getThisObject();
-                if (!config.enabled || !config.notificationGlassEnabled) {
+                if (!config.enabled || !config.notificationGlassEnabled || !renderer.shouldDraw(view, config)) {
                     renderer.remove(view);
                     return chain.proceed();
                 }

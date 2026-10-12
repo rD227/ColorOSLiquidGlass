@@ -16,6 +16,7 @@ import android.view.View;
 import net.z841973620.colorosliquidglass.ipc.DesktopBackdropClient;
 
 import java.lang.reflect.Method;
+import java.lang.ref.WeakReference;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
@@ -69,6 +70,7 @@ public final class BehindDisplayCapture {
 
         final CaptureCadence cadence = new CaptureCadence();
         volatile int captureEpoch;
+        WeakReference<GlassDrawable> headsUpGlass;
     }
 
     private static final class CaptureRequest {
@@ -128,7 +130,25 @@ public final class BehindDisplayCapture {
         // Lock-screen volume samples wallpaper + in-process clock/notifications.
         if (BackdropCapture.hasWallpaperOnlyMark(target)) return false;
         if (BackdropCapture.hasLockContentMark(target)) return false;
-        return isSysUiMenuGlass(target) || isVolumeGlass(target);
+        return isSysUiMenuGlass(target) || isVolumeGlass(target) || isHeadsUpGlass(target);
+    }
+
+    static boolean isHeadsUpGlass(View host) {
+        HostState state = HOSTS.get(host);
+        return state != null && state.headsUpGlass != null && state.headsUpGlass.get() != null;
+    }
+
+    static void bindHeadsUp(View host, GlassDrawable glass) {
+        stateOf(host).headsUpGlass = new WeakReference<>(glass);
+        bindApp(host, null);
+    }
+
+    static void unbindHeadsUp(View host) {
+        HostState state = HOSTS.get(host);
+        if (state != null && state.headsUpGlass != null) {
+            stopStreaming(host);
+            state.headsUpGlass = null;
+        }
     }
 
     private static boolean hasTag(View target, String expected) {
@@ -329,13 +349,15 @@ public final class BehindDisplayCapture {
         host.getLocationOnScreen(loc);
         float blurPx = 0f;
         GlassDrawable glass = GlassInstaller.get(host);
+        if (glass == null && s.headsUpGlass != null) glass = s.headsUpGlass.get();
         if (glass != null) blurPx = glass.blurRadiusPx();
 
         boolean volume = isVolumeGlass(host);
+        boolean paced = volume || isHeadsUpGlass(host);
         long nowNanos = android.os.SystemClock.elapsedRealtimeNanos();
         int fps = glass == null ? 30 : glass.volumeBackdropFps();
         boolean immediate = s.forceOnce || s.cache == null;
-        if (volume && !s.cadence.isDue(nowNanos, immediate)) return;
+        if (paced && !s.cadence.isDue(nowNanos, immediate)) return;
         Rect sampleRect = volume
                 ? volumeGlassScreenRect(host)
                 : new Rect(loc[0], loc[1], loc[0] + width, loc[1] + height);
@@ -395,7 +417,7 @@ public final class BehindDisplayCapture {
                         || s.cache.getWidth() != sampleW || s.cache.getHeight() != sampleH
                         || geometryChanged;
                 if (need) {
-                    if (volume && !s.capturing.get()) s.cadence.started(nowNanos, fps, immediate);
+                    if (paced && !s.capturing.get()) s.cadence.started(nowNanos, fps, immediate);
                     applyDesktopRegionFrame(host, s, region,
                             sampleX, sampleY, sampleW, sampleH, blurPx);
                 }
@@ -411,7 +433,7 @@ public final class BehindDisplayCapture {
         }
 
         if (!s.capturing.compareAndSet(false, true)) return;
-        if (volume) s.cadence.started(nowNanos, fps, immediate);
+        if (paced) s.cadence.started(nowNanos, fps, immediate);
 
         float density = host.getResources().getDisplayMetrics().density;
         Object exclude = surfaceControlOf(host);

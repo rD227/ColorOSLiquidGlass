@@ -27,10 +27,12 @@ public final class NotificationCardGlass {
     private final Field bottomClips;
     private final Field cornerRadii;
     private final Field background;
+    private final HeadsUpState headsUpState;
     // The view's attach listener owns State. Weak values avoid map -> glass -> view leaks.
     private final Map<View, WeakReference<State>> states = new WeakHashMap<>();
 
     public NotificationCardGlass(Class<?> type) throws ReflectiveOperationException {
+        headsUpState = new HeadsUpState(type.getClassLoader());
         actualHeight = method(type, "getActualHeight");
         actualWidth = method(type, "getActualWidth");
         alignedRight = method(type, "isAlignedToRight");
@@ -41,6 +43,10 @@ public final class NotificationCardGlass {
         bottomClips = field(type, "mBottomAmountClips");
         cornerRadii = field(type, "mCornerRadii");
         background = field(type, "mBackground");
+    }
+
+    public boolean shouldDraw(View view, GlassConfig config) {
+        return config.headsUpGlassEnabled || !headsUpState.isHeadsUp(view);
     }
 
     public void draw(View view, Canvas canvas, GlassConfig config)
@@ -65,10 +71,19 @@ public final class NotificationCardGlass {
 
         State state = state(view, config);
         boolean locked = state.keyguard.isKeyguardLocked();
-        if (state.locked == null || state.locked != locked) {
-            if (locked) GlassInstaller.markLockWallpaperOnly(view);
-            else GlassInstaller.markWallpaperOnly(view);
+        boolean live = !locked && headsUpState.isHeadsUp(view);
+        if (state.locked == null || state.locked != locked || state.live != live) {
+            if (live) {
+                BackdropCapture.clearWallpaperOnly(view);
+                BehindDisplayCapture.bindHeadsUp(view, state.glass);
+            } else {
+                BehindDisplayCapture.unbindHeadsUp(view);
+                if (locked) GlassInstaller.markLockWallpaperOnly(view);
+                else GlassInstaller.markWallpaperOnly(view);
+                BackdropCapture.markSharedWallpaper(view);
+            }
             state.locked = locked;
+            state.live = live;
             GlassInstaller.forceCapture(view);
         }
         GlassDrawable glass = state.glass;
@@ -108,6 +123,7 @@ public final class NotificationCardGlass {
         State state = reference == null ? null : reference.get();
         if (state != null) view.removeOnAttachStateChangeListener(state);
         if (state != null) {
+            BehindDisplayCapture.unbindHeadsUp(view);
             state.glass.setCallback(null);
             BackdropCapture.unregister(view);
             BackdropCapture.clearWallpaperOnly(view);
@@ -118,6 +134,7 @@ public final class NotificationCardGlass {
         final GlassDrawable glass;
         final KeyguardManager keyguard;
         Boolean locked;
+        boolean live;
 
         State(View view, GlassConfig config) {
             keyguard = view.getContext().getSystemService(KeyguardManager.class);

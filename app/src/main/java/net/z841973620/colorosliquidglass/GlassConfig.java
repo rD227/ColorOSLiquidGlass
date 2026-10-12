@@ -11,6 +11,8 @@ public final class GlassConfig {
     public boolean modifyMenuStyle = true;
     public boolean notificationGlassEnabled = true;
     public int volumeBackdropFps = 30;
+    public boolean headsUpGlassEnabled = true;
+    public boolean menuBackdropEnabled = true;
     public float glassIntensity = 1f;
     public float blurRadius = 0f;
     public float refractionHeight = .2f;
@@ -30,6 +32,8 @@ public final class GlassConfig {
         // Preferences are an external boundary; unsupported imported values use the default.
         c.volumeBackdropFps = fps == 10 || fps == 15 || fps == 30 || fps == 60
                 || fps == 90 || fps == 120 ? fps : 30;
+        c.headsUpGlassEnabled = p.getBoolean("heads_up_glass_enabled", true);
+        c.menuBackdropEnabled = p.getBoolean("menu_backdrop_enabled", true);
         c.glassIntensity = p.getFloat("glass_intensity", 1f);
         c.blurRadius = p.getFloat("blur_radius", 0f);
         c.refractionHeight = p.getFloat("refraction_height", .2f);
@@ -58,6 +62,8 @@ public final class GlassConfig {
                 .putBoolean("modify_menu_style", modifyMenuStyle)
                 .putBoolean("notification_glass_enabled", notificationGlassEnabled)
                 .putInt("volume_backdrop_fps", volumeBackdropFps)
+                .putBoolean("heads_up_glass_enabled", headsUpGlassEnabled)
+                .putBoolean("menu_backdrop_enabled", menuBackdropEnabled)
                 .putFloat("glass_intensity", glassIntensity)
                 .putFloat("blur_radius", blurRadius)
                 .putFloat("refraction_height", refractionHeight)

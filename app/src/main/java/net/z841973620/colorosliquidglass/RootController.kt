@@ -86,6 +86,8 @@ object RootController {
             preferences.getBoolean("modify_menu_style", !config.modifyMenuStyle) == config.modifyMenuStyle &&
             preferences.getBoolean("notification_glass_enabled", !config.notificationGlassEnabled) == config.notificationGlassEnabled &&
             preferences.getInt("volume_backdrop_fps", -1) == config.volumeBackdropFps &&
+            preferences.getBoolean("heads_up_glass_enabled", !config.headsUpGlassEnabled) == config.headsUpGlassEnabled &&
+            preferences.getBoolean("menu_backdrop_enabled", !config.menuBackdropEnabled) == config.menuBackdropEnabled &&
             preferences.getFloat("glass_intensity", Float.NaN) == config.glassIntensity &&
             preferences.getFloat("blur_radius", Float.NaN) == config.blurRadius &&
             preferences.getFloat("refraction_height", Float.NaN) == config.refractionHeight &&

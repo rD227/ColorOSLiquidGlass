@@ -27,9 +27,13 @@ fun main() {
     for (fps in listOf(10, 15, 30, 60, 90, 120)) {
         val config = GlassConfig()
         config.volumeBackdropFps = fps
+        config.headsUpGlassEnabled = fps == 30
+        config.menuBackdropEnabled = fps == 60
         check(config.write(preferences))
         check(stored["volume_backdrop_fps"] == fps)
         check(GlassConfig.read(preferences).volumeBackdropFps == fps)
+        check(GlassConfig.read(preferences).headsUpGlassEnabled == config.headsUpGlassEnabled)
+        check(GlassConfig.read(preferences).menuBackdropEnabled == config.menuBackdropEnabled)
     }
     stored["volume_backdrop_fps"] = 0
     check(GlassConfig.read(preferences).volumeBackdropFps == 30)
