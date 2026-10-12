@@ -72,6 +72,9 @@ fun GlassPlaygroundContent() {
     var volumeBackdropFps by remember { mutableStateOf(initial.volumeBackdropFps) }
     var headsUpGlassEnabled by remember { mutableStateOf(initial.headsUpGlassEnabled) }
     var menuBackdropEnabled by remember { mutableStateOf(initial.menuBackdropEnabled) }
+    var notificationAppBackdrop by remember { mutableStateOf(initial.notificationAppBackdrop) }
+    val notificationFpsOptions = remember { listOf(1, 2, 5, 10, 15, 30) }
+    var notificationBackdropFps by remember { mutableStateOf(initial.notificationBackdropFps) }
     var glassIntensity by remember { mutableFloatStateOf(initial.glassIntensity) }
     var blurRadiusDp by remember { mutableFloatStateOf(initial.blurRadius) }
     var refractionHeightFrac by remember { mutableFloatStateOf(initial.refractionHeight) }
@@ -89,6 +92,8 @@ fun GlassPlaygroundContent() {
         it.volumeBackdropFps = volumeBackdropFps
         it.headsUpGlassEnabled = headsUpGlassEnabled
         it.menuBackdropEnabled = menuBackdropEnabled
+        it.notificationAppBackdrop = notificationAppBackdrop
+        it.notificationBackdropFps = notificationBackdropFps
         it.glassIntensity = glassIntensity
         it.blurRadius = blurRadiusDp
         it.refractionHeight = refractionHeightFrac
@@ -211,6 +216,18 @@ fun GlassPlaygroundContent() {
                         headsUpGlassEnabled = it
                         RootController.saveConfig(context, currentConfig()) { _, _ -> }
                     }
+                    PlaygroundToggle("通知卡片采样应用背景", { notificationAppBackdrop }, sheetBackdrop) {
+                        notificationAppBackdrop = it
+                        RootController.saveConfig(context, currentConfig()) { _, _ -> }
+                    }
+                    if (notificationAppBackdrop) {
+                        PlaygroundSlider("通知卡片背景更新：$notificationBackdropFps FPS",
+                            { notificationFpsOptions.indexOf(notificationBackdropFps).toFloat() },
+                            0f..5f, 0.01f, sheetBackdrop, steps = 4) {
+                            notificationBackdropFps = notificationFpsOptions[it.toInt()]
+                        }
+                    }
+                    BasicText("作用于下拉通知卡片和分组标题；关闭时使用壁纸。锁屏仍使用锁屏壁纸。低帧率仅减少背景更新，滑动保持流畅。")
                     PlaygroundToggle("菜单采样背景", { menuBackdropEnabled }, sheetBackdrop) {
                         menuBackdropEnabled = it
                         RootController.saveConfig(context, currentConfig()) { _, _ -> }

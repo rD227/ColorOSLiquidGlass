@@ -36,6 +36,16 @@ fun main() {
         check(GlassConfig.read(preferences).menuBackdropEnabled == config.menuBackdropEnabled)
     }
     stored["volume_backdrop_fps"] = 0
+    check(!GlassConfig().notificationAppBackdrop)
+    for (fps in listOf(1, 2, 5, 10, 15, 30)) {
+        val config = GlassConfig().apply { notificationAppBackdrop = true; notificationBackdropFps = fps }
+        check(config.write(preferences))
+        check(GlassConfig.read(preferences).notificationAppBackdrop)
+        check(GlassConfig.read(preferences).notificationBackdropFps == fps)
+    }
+    stored["notification_backdrop_fps"] = -1
+    check(GlassConfig.read(preferences).notificationBackdropFps == 5)
+    stored["volume_backdrop_fps"] = 0
     check(GlassConfig.read(preferences).volumeBackdropFps == 30)
     println("PASS: old preference defaults, all FPS round trips, invalid import default")
 }

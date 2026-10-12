@@ -216,9 +216,11 @@ public final class GlassDrawable extends Drawable {
         canvas.clipPath(shape);
         boolean drewBackdrop = false;
         boolean sampleBackdrop = backdropEnabled();
+        boolean sharedShade = sampleBackdrop && SharedNotificationBackdrop.contains(owner);
         boolean sysUiLive = sampleBackdrop && BehindDisplayCapture.isSysUiLiveGlass(owner);
         boolean sharedWallpaper = sampleBackdrop && !sysUiLive && backdrop != null && backdrop.usesSharedWallpaper();
-        Bitmap snapshot = !sampleBackdrop || sharedWallpaper ? null : sysUiLive
+        Bitmap snapshot = sharedShade ? SharedNotificationBackdrop.texture(owner)
+                : !sampleBackdrop || sharedWallpaper ? null : sysUiLive
                 ? BehindDisplayCapture.currentFrame(owner)
                 : (backdrop == null ? null : backdrop.bitmap());
         float[] sampleScale = sysUiLive
@@ -264,7 +266,9 @@ public final class GlassDrawable extends Drawable {
                 float min = Math.max(1f, Math.min(bounds.width(), bounds.height()));
                 float[] corner = clampedRadii(bounds);
                 runtimeShader.setFloatUniform("size", bounds.width(), bounds.height());
-                if (sharedWallpaper) {
+                if (sharedShade) {
+                    SharedWallpaperBackdrop.rootCoordinates(owner, bounds.left, bounds.top, sampleMatrix);
+                } else if (sharedWallpaper) {
                     SharedWallpaperBackdrop.coordinates(owner, bounds.left, bounds.top, sampleMatrix);
                 } else {
                     captureCoordinates(snapshot, shaderBitmap, bounds, sampleScale);
@@ -536,6 +540,7 @@ public final class GlassDrawable extends Drawable {
     }
 
     private float effectiveShaderBlurRadius() {
+        if (SharedNotificationBackdrop.contains(owner)) return 0f;
         // SysUI float menus: blur is applied on the DESKTOP crop worker / APP capture worker.
         // Skip a second CPU blur on the draw thread to keep latency down.
         if (BehindDisplayCapture.isSysUiLiveGlass(owner)) return 0f;

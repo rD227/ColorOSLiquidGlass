@@ -1,6 +1,5 @@
 package net.z841973620.colorosliquidglass.glass;
 
-import android.app.KeyguardManager;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.util.Log;
@@ -70,28 +69,8 @@ public final class NotificationCardGlass {
         }
 
         State state = state(view, config);
-        boolean locked = state.keyguard.isKeyguardLocked();
-        boolean live = !locked && headsUpState.isHeadsUp(view);
-        if (state.locked == null || state.locked != locked || state.live != live) {
-            if (live) {
-                BackdropCapture.clearWallpaperOnly(view);
-                BehindDisplayCapture.bindHeadsUp(view, state.glass);
-            } else {
-                BehindDisplayCapture.unbindHeadsUp(view);
-                if (locked) GlassInstaller.markLockWallpaperOnly(view);
-                else GlassInstaller.markWallpaperOnly(view);
-                BackdropCapture.markSharedWallpaper(view);
-            }
-            state.locked = locked;
-            state.live = live;
-            GlassInstaller.forceCapture(view);
-        }
         GlassDrawable glass = state.glass;
-        // Replacing the OEM background also bypasses its dark material. Restore contrast
-        // here, after refraction, without changing the shared wallpaper or notification text.
-        // Re-evaluate on draw: SystemUI can retain the same row across theme/lock changes.
-        glass.setColorFilter(NotificationGlassAppearance.backdropFilter(
-                locked, view.getResources().getConfiguration().uiMode));
+        state.source.update(glass, config, headsUpState.isHeadsUp(view));
         glass.setCornerRadii(radii[0], radii[2], radii[4], radii[6]);
         glass.setBounds(left, 0, left + width, bottom);
         glass.setAlpha(original.getAlpha());
@@ -123,21 +102,18 @@ public final class NotificationCardGlass {
         State state = reference == null ? null : reference.get();
         if (state != null) view.removeOnAttachStateChangeListener(state);
         if (state != null) {
-            BehindDisplayCapture.unbindHeadsUp(view);
+            state.source.release();
             state.glass.setCallback(null);
             BackdropCapture.unregister(view);
-            BackdropCapture.clearWallpaperOnly(view);
         }
     }
 
     private final class State implements View.OnAttachStateChangeListener {
         final GlassDrawable glass;
-        final KeyguardManager keyguard;
-        Boolean locked;
-        boolean live;
+        final NotificationGlassSource source;
 
         State(View view, GlassConfig config) {
-            keyguard = view.getContext().getSystemService(KeyguardManager.class);
+            source = new NotificationGlassSource(view);
             glass = new GlassDrawable(view, config);
             // Invalidation belongs to the host even though glass is not View.mBackground.
             glass.setCallback(view);

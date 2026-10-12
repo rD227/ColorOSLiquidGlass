@@ -202,6 +202,7 @@ import java.util.WeakHashMap;
         if (target == null || target.getWidth() <= 0 || target.getHeight() <= 0) return;
         GlassDrawable installed = GlassInstaller.get(target);
         if (installed != null && !installed.backdropEnabled()) return;
+        if (SharedNotificationBackdrop.contains(target)) return;
         if (BehindDisplayCapture.isSysUiLiveGlass(target)) {
             BehindDisplayCapture.requestRefresh(target, true);
             return;
@@ -630,6 +631,7 @@ import java.util.WeakHashMap;
         View target = targetRef.get();
         View root = rootRef == null ? null : rootRef.get();
         if (target == null || root == null) return true;
+        if (SharedNotificationBackdrop.contains(target)) return true;
         GlassDrawable installed = GlassInstaller.get(target);
         if (installed != null && !installed.backdropEnabled()) {
             if (BehindDisplayCapture.isSysUiLiveGlass(target)) BehindDisplayCapture.stopStreaming(target);

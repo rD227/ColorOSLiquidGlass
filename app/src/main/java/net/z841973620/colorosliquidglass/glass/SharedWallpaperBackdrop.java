@@ -31,6 +31,14 @@ final class SharedWallpaperBackdrop {
     }
 
     static void coordinates(View target, float left, float top, float[] values) {
+        coordinates(target, left, top, BackdropCapture.sharedWallpaperZoom(target), values);
+    }
+
+    static void rootCoordinates(View target, float left, float top, float[] values) {
+        coordinates(target, left, top, 1f, values);
+    }
+
+    private static void coordinates(View target, float left, float top, float zoom, float[] values) {
         View root = target.getRootView();
         Matrix targetToRoot = new Matrix();
         // Walk forward to our ancestor, avoiding an inverse of the root matrix. An OEM
@@ -43,7 +51,7 @@ final class SharedWallpaperBackdrop {
             current = parent;
         }
         BackdropCoordinates.map(targetToRoot, left, top,
-                root.getWidth(), root.getHeight(), BackdropCapture.sharedWallpaperZoom(target), values);
+                root.getWidth(), root.getHeight(), zoom, values);
     }
 
     /** Source selection changes on lock/unlock; keep both textures without cache thrashing. */

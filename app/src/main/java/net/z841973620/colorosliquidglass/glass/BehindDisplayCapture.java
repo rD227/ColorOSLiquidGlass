@@ -71,6 +71,9 @@ public final class BehindDisplayCapture {
         final CaptureCadence cadence = new CaptureCadence();
         volatile int captureEpoch;
         WeakReference<GlassDrawable> headsUpGlass;
+        boolean notificationShade;
+        int shadeFps;
+        float shadeBlurPx;
     }
 
     private static final class CaptureRequest {
@@ -149,6 +152,15 @@ public final class BehindDisplayCapture {
             stopStreaming(host);
             state.headsUpGlass = null;
         }
+    }
+
+    static void requestShade(View root, float blurPx, int fps) {
+        HostState state = stateOf(root);
+        state.mode = Mode.APP;
+        state.notificationShade = true;
+        state.shadeFps = fps;
+        state.shadeBlurPx = blurPx;
+        requestRefresh(root);
     }
 
     private static boolean hasTag(View target, String expected) {
@@ -353,9 +365,13 @@ public final class BehindDisplayCapture {
         if (glass != null) blurPx = glass.blurRadiusPx();
 
         boolean volume = isVolumeGlass(host);
-        boolean paced = volume || isHeadsUpGlass(host);
+        boolean paced = volume || isHeadsUpGlass(host) || s.notificationShade;
         long nowNanos = android.os.SystemClock.elapsedRealtimeNanos();
         int fps = glass == null ? 30 : glass.volumeBackdropFps();
+        if (s.notificationShade) {
+            fps = s.shadeFps;
+            blurPx = s.shadeBlurPx;
+        }
         boolean immediate = s.forceOnce || s.cache == null;
         if (paced && !s.cadence.isDue(nowNanos, immediate)) return;
         Rect sampleRect = volume
