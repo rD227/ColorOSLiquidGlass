@@ -68,6 +68,8 @@ fun GlassPlaygroundContent() {
     var hideDesktopIcons by remember { mutableStateOf(initial.hideDesktopIcons) }
     var modifyMenuStyle by remember { mutableStateOf(initial.modifyMenuStyle) }
     var notificationGlassEnabled by remember { mutableStateOf(initial.notificationGlassEnabled) }
+    val volumeFpsOptions = remember { listOf(10, 15, 30, 60, 90, 120) }
+    var volumeBackdropFps by remember { mutableStateOf(initial.volumeBackdropFps) }
     var glassIntensity by remember { mutableFloatStateOf(initial.glassIntensity) }
     var blurRadiusDp by remember { mutableFloatStateOf(initial.blurRadius) }
     var refractionHeightFrac by remember { mutableFloatStateOf(initial.refractionHeight) }
@@ -82,6 +84,7 @@ fun GlassPlaygroundContent() {
         it.hideDesktopIcons = hideDesktopIcons
         it.modifyMenuStyle = modifyMenuStyle
         it.notificationGlassEnabled = notificationGlassEnabled
+        it.volumeBackdropFps = volumeBackdropFps
         it.glassIntensity = glassIntensity
         it.blurRadius = blurRadiusDp
         it.refractionHeight = refractionHeightFrac
@@ -202,6 +205,12 @@ fun GlassPlaygroundContent() {
                     }
                     PlaygroundSlider("液态玻璃强度", { glassIntensity }, 0f..1f, 0.001f, sheetBackdrop) { glassIntensity = it }
                     PlaygroundSlider("模糊半径", { blurRadiusDp }, 0f..32f, 0.01f, sheetBackdrop) { blurRadiusDp = it }
+                    PlaygroundSlider("音量条背景更新：$volumeBackdropFps FPS",
+                        { volumeFpsOptions.indexOf(volumeBackdropFps).toFloat() },
+                        0f..5f, 0.01f, sheetBackdrop, steps = 4) {
+                        volumeBackdropFps = volumeFpsOptions[it.toInt()]
+                    }
+                    BasicText("只调整背景更新频率；低帧率更省资源，快速画面可能稍有滞后。保存后重启系统组件生效。")
                     PlaygroundSlider("折射高度", { refractionHeightFrac }, 0f..1f, 0.001f, sheetBackdrop) { refractionHeightFrac = it }
                     PlaygroundSlider("扭曲强度", { refractionAmountFrac }, 0f..1f, 0.001f, sheetBackdrop) { refractionAmountFrac = it }
                     PlaygroundSlider("反射", { reflectionIntensity }, 0f..1f, 0.001f, sheetBackdrop) { reflectionIntensity = it }
@@ -279,10 +288,11 @@ private fun PlaygroundSlider(
     range: ClosedFloatingPointRange<Float>,
     threshold: Float,
     backdrop: com.kyant.backdrop.Backdrop,
+    steps: Int = 0,
     onChange: (Float) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         BasicText(label)
-        LiquidSlider(value, onChange, range, threshold, backdrop)
+        LiquidSlider(value, onChange, range, threshold, backdrop, steps = steps)
     }
 }

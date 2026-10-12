@@ -85,6 +85,7 @@ object RootController {
             preferences.getBoolean("hide_desktop_icons", !config.hideDesktopIcons) == config.hideDesktopIcons &&
             preferences.getBoolean("modify_menu_style", !config.modifyMenuStyle) == config.modifyMenuStyle &&
             preferences.getBoolean("notification_glass_enabled", !config.notificationGlassEnabled) == config.notificationGlassEnabled &&
+            preferences.getInt("volume_backdrop_fps", -1) == config.volumeBackdropFps &&
             preferences.getFloat("glass_intensity", Float.NaN) == config.glassIntensity &&
             preferences.getFloat("blur_radius", Float.NaN) == config.blurRadius &&
             preferences.getFloat("refraction_height", Float.NaN) == config.refractionHeight &&

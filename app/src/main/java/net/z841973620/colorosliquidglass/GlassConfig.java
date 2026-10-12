@@ -10,6 +10,7 @@ public final class GlassConfig {
     /** Long-press / Overview / float app-option menus use LiquidGlass when true. */
     public boolean modifyMenuStyle = true;
     public boolean notificationGlassEnabled = true;
+    public int volumeBackdropFps = 30;
     public float glassIntensity = 1f;
     public float blurRadius = 0f;
     public float refractionHeight = .2f;
@@ -25,6 +26,10 @@ public final class GlassConfig {
         c.hideDesktopIcons = p.getBoolean("hide_desktop_icons", false);
         c.modifyMenuStyle = p.getBoolean("modify_menu_style", true);
         c.notificationGlassEnabled = p.getBoolean("notification_glass_enabled", true);
+        int fps = p.getInt("volume_backdrop_fps", 30);
+        // Preferences are an external boundary; unsupported imported values use the default.
+        c.volumeBackdropFps = fps == 10 || fps == 15 || fps == 30 || fps == 60
+                || fps == 90 || fps == 120 ? fps : 30;
         c.glassIntensity = p.getFloat("glass_intensity", 1f);
         c.blurRadius = p.getFloat("blur_radius", 0f);
         c.refractionHeight = p.getFloat("refraction_height", .2f);
@@ -52,6 +57,7 @@ public final class GlassConfig {
                 .putBoolean("hide_desktop_icons", hideDesktopIcons)
                 .putBoolean("modify_menu_style", modifyMenuStyle)
                 .putBoolean("notification_glass_enabled", notificationGlassEnabled)
+                .putInt("volume_backdrop_fps", volumeBackdropFps)
                 .putFloat("glass_intensity", glassIntensity)
                 .putFloat("blur_radius", blurRadius)
                 .putFloat("refraction_height", refractionHeight)

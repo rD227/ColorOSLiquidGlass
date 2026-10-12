@@ -546,6 +546,8 @@ public final class GlassDrawable extends Drawable {
         return Math.max(0f, config.blurRadius) * owner.getResources().getDisplayMetrics().density;
     }
 
+    int volumeBackdropFps() { return config.volumeBackdropFps; }
+
     /** Hot-update config from the module console without reinstalling the drawable. */
     void applyConfig(GlassConfig next) {
         if (next == null) return;

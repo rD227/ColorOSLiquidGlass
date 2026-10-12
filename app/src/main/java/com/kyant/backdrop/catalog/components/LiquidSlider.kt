@@ -50,8 +50,13 @@ fun LiquidSlider(
     valueRange: ClosedFloatingPointRange<Float>,
     visibilityThreshold: Float,
     backdrop: Backdrop,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    steps: Int = 0
 ) {
+    require(steps >= 0)
+    fun emitValue(raw: Float) {
+        onValueChange(snapSliderValue(raw, valueRange, steps))
+    }
     val isLightTheme = !isSystemInDarkTheme()
     val accentColor =
         if (isLightTheme) Color(0xFF0088FF)
@@ -88,10 +93,10 @@ fun LiquidSlider(
                     dragValue = valueRange.start +
                         (valueRange.endInclusive - valueRange.start) *
                         if (isLtr) fraction else 1f - fraction
-                    onValueChange(dragValue)
+                    emitValue(dragValue)
                 },
                 onDragStopped = {
-                    onValueChange(dragValue)
+                    emitValue(dragValue)
                 },
                 onDrag = { _, dragAmount ->
                     if (!didDrag) {
@@ -102,7 +107,7 @@ fun LiquidSlider(
                     dragValue = (
                         dragValue + if (isLtr) delta else -delta
                     ).coerceIn(valueRange)
-                    onValueChange(dragValue)
+                    emitValue(dragValue)
                 }
             )
         }
