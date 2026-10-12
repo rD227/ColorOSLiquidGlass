@@ -245,6 +245,8 @@ public final class GlassDrawable extends Drawable {
                     cachedSnapshot = shaderBitmap;
                     cachedImageShader = new BitmapShader(
                             shaderBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+                    // RuntimeShader inputs default to nearest sampling, regardless of Paint flags.
+                    cachedImageShader.setFilterMode(BitmapShader.FILTER_MODE_LINEAR);
                 }
                 // Identity matrix: scaling is applied in AGSL via sampleScale.
                 cachedImageShader.setLocalMatrix(null);

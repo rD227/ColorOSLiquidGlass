@@ -14,16 +14,62 @@ public final class BackdropBlur {
 
     /** Independent low-resolution result: never blur a producer's reusable frame in place. */
     public static Bitmap blurCopy(Bitmap src, float radiusPx) {
-        // Keep about two samples per blur radius; beyond 8x reduction small details alias.
+        // Average the entire source footprint before decimating. Bilinear 8x resizing
+        // only sees four texels; repeated bilinear halving still aliases at odd sizes.
         float reduction = Math.max(1f, Math.min(8f, radiusPx / 2f));
         int width = Math.max(1, Math.round(src.getWidth() / reduction));
         int height = Math.max(1, Math.round(src.getHeight() / reduction));
-        Bitmap result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        android.graphics.Canvas canvas = new android.graphics.Canvas(result);
-        canvas.drawBitmap(src, null, new android.graphics.Rect(0, 0, width, height),
-                new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG));
+        Bitmap result = areaResize(src, width, height);
         int radius = Math.round(radiusPx * width / src.getWidth());
         if (radius > 0) stackBlur(result, Math.min(radius, 64));
+        return result;
+    }
+
+    /** Separable area filter, including fractional edge coverage for non-integer ratios. */
+    private static Bitmap areaResize(Bitmap src, int width, int height) {
+        int sw = src.getWidth(), sh = src.getHeight();
+        if (sw == width && sh == height) return src.copy(Bitmap.Config.ARGB_8888, true);
+        int[] row = new int[sw];
+        float[] horizontal = new float[width * sh * 4];
+        double sx = sw / (double) width, sy = sh / (double) height;
+        for (int y = 0; y < sh; y++) {
+            src.getPixels(row, 0, sw, 0, y, sw, 1);
+            for (int x = 0; x < width; x++) {
+                double start = x * sx, end = (x + 1) * sx;
+                int out = (y * width + x) * 4;
+                for (int ix = (int) start; ix < Math.min(sw, (int) Math.ceil(end)); ix++) {
+                    float weight = (float) ((Math.min(end, ix + 1) - Math.max(start, ix)) / sx);
+                    int c = row[ix];
+                    float a = (c >>> 24) / 255f;
+                    horizontal[out] += (c >>> 24) * weight;
+                    horizontal[out + 1] += ((c >> 16) & 255) * a * weight;
+                    horizontal[out + 2] += ((c >> 8) & 255) * a * weight;
+                    horizontal[out + 3] += (c & 255) * a * weight;
+                }
+            }
+        }
+        int[] pixels = new int[width * height];
+        for (int y = 0; y < height; y++) {
+            double start = y * sy, end = (y + 1) * sy;
+            for (int x = 0; x < width; x++) {
+                float a = 0, r = 0, g = 0, b = 0;
+                for (int iy = (int) start; iy < Math.min(sh, (int) Math.ceil(end)); iy++) {
+                    float weight = (float) ((Math.min(end, iy + 1) - Math.max(start, iy)) / sy);
+                    int in = (iy * width + x) * 4;
+                    a += horizontal[in] * weight;
+                    r += horizontal[in + 1] * weight;
+                    g += horizontal[in + 2] * weight;
+                    b += horizontal[in + 3] * weight;
+                }
+                // Bitmap.setPixels takes straight ARGB; fully transparent footprints have no RGB.
+                float unpremultiply = a == 0 ? 0 : 255f / a;
+                pixels[y * width + x] = (Math.round(a) << 24)
+                        | (Math.round(r * unpremultiply) << 16)
+                        | (Math.round(g * unpremultiply) << 8) | Math.round(b * unpremultiply);
+            }
+        }
+        Bitmap result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        result.setPixels(pixels, 0, width, 0, 0, width, height);
         return result;
     }
 

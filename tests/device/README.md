@@ -15,7 +15,8 @@ New-Item -ItemType Directory -Force $probe | Out-Null
   -cp "$env:ANDROID_HOME/platforms/android-35/android.jar" -d $probe `
   app/src/main/java/net/z841973620/colorosliquidglass/glass/BackdropBlur.java `
   app/src/main/java/net/z841973620/colorosliquidglass/glass/NotificationGlassAppearance.java `
-  tests/device/GlassPerformanceProbe.java tests/device/NotificationAppearanceProbe.java
+  tests/device/GlassPerformanceProbe.java tests/device/NotificationAppearanceProbe.java `
+  tests/device/TemporalBlurProbe.java
 if ($LASTEXITCODE) { throw 'Probe compilation failed' }
 $classes = Get-ChildItem $probe -Recurse -Filter '*.class' | ForEach-Object FullName
 & "$env:JAVA_HOME/bin/java.exe" -cp "$env:ANDROID_HOME/build-tools/35.0.0/lib/d8.jar" `
@@ -26,6 +27,8 @@ if ($LASTEXITCODE) { throw 'DEX compilation failed' }
 if ($LASTEXITCODE) { throw 'Probe upload failed' }
 & "$env:ANDROID_HOME/platform-tools/adb.exe" shell 'CLASSPATH=/data/local/tmp/colg-performance-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.GlassPerformanceProbe'
 if ($LASTEXITCODE) { throw 'Device regression probe failed' }
+& "$env:ANDROID_HOME/platform-tools/adb.exe" shell 'CLASSPATH=/data/local/tmp/colg-performance-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.TemporalBlurProbe'
+if ($LASTEXITCODE) { throw 'Temporal blur probe failed' }
 & "$env:ANDROID_HOME/platform-tools/adb.exe" shell 'CLASSPATH=/data/local/tmp/colg-performance-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.NotificationAppearanceProbe'
 if ($LASTEXITCODE) { throw 'Notification appearance probe failed' }
 ```
@@ -40,3 +43,9 @@ The experimental hold-until-settled texture policy was reverted after visible ju
 night mode, preserves row fade alpha, and reuses one paint through lock/unlock and day/night
 transitions. It tests the material filter, not the full OEM shader, final screenshot contrast,
 or semi-transparent notification text. Check those visually after installation.
+
+`TemporalBlurProbe` moves a crop over static stripes and thin lines, then compares the same
+wallpaper points across 16 frames. It includes odd crop dimensions and a one-pixel-wide
+source. Single-step bilinear downsampling failed with ranges 255/26/33; area filtering
+reduces those fixtures to 0/2/4 (0–255 channel values). This limits spatial aliasing;
+it does not establish that every OEM animation has correct coordinate mapping.
