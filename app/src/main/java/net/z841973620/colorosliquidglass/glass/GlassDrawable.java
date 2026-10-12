@@ -26,8 +26,9 @@ public final class GlassDrawable extends Drawable {
     private static final String SHADER = """
             uniform shader image;
             uniform float2 size;
-            uniform float2 sampleOrigin;
-            uniform float2 sampleScale;
+            uniform float3 sampleMatrixX;
+            uniform float3 sampleMatrixY;
+            uniform float3 sampleMatrixW;
             uniform float4 cornerRadii;
             uniform float blurRadius;
             uniform float refractionHeight;
@@ -69,9 +70,9 @@ public final class GlassDrawable extends Drawable {
             }
 
             half4 sampleBackdrop(float2 coord) {
-                // RuntimeShader does not reliably honor BitmapShader local matrices, so map
-                // view-space coords onto the capture bitmap here.
-                return image.eval((coord + sampleOrigin) * sampleScale);
+                float3 point = float3(coord, 1.0);
+                float w = dot(sampleMatrixW, point);
+                return image.eval(float2(dot(sampleMatrixX, point), dot(sampleMatrixY, point)) / w);
             }
 
             half4 vibrant(float2 coord) {
@@ -143,6 +144,7 @@ public final class GlassDrawable extends Drawable {
     private float cachedBlurRadiusPx = -1f;
     private int cachedSnapshotGeneration;
     private BitmapShader cachedImageShader;
+    private final float[] sampleMatrix = new float[9];
     private boolean shaderFailureLogged;
     private int alpha = 255;
 
@@ -210,7 +212,8 @@ public final class GlassDrawable extends Drawable {
         canvas.clipPath(shape);
         boolean drewBackdrop = false;
         boolean sysUiLive = BehindDisplayCapture.isSysUiLiveGlass(owner);
-        Bitmap snapshot = sysUiLive
+        boolean sharedWallpaper = !sysUiLive && backdrop != null && backdrop.usesSharedWallpaper();
+        Bitmap snapshot = sharedWallpaper ? null : sysUiLive
                 ? BehindDisplayCapture.currentFrame(owner)
                 : (backdrop == null ? null : backdrop.bitmap());
         float[] sampleScale = sysUiLive
@@ -237,10 +240,12 @@ public final class GlassDrawable extends Drawable {
                 }
             } catch (Throwable ignored) { }
         } else if (canvas.isHardwareAccelerated() && runtimeShader != null
-                && snapshot != null && !snapshot.isRecycled()) {
+                && (sharedWallpaper || (snapshot != null && !snapshot.isRecycled()))) {
             try {
                 float blurPx = effectiveShaderBlurRadius();
-                Bitmap shaderBitmap = blurredBackdrop(snapshot, blurPx);
+                Bitmap shaderBitmap = sharedWallpaper
+                        ? SharedWallpaperBackdrop.texture(owner, blurPx)
+                        : blurredBackdrop(snapshot, blurPx);
                 if (shaderBitmap != cachedSnapshot || cachedImageShader == null) {
                     cachedSnapshot = shaderBitmap;
                     cachedImageShader = new BitmapShader(
@@ -248,46 +253,20 @@ public final class GlassDrawable extends Drawable {
                     // RuntimeShader inputs default to nearest sampling, regardless of Paint flags.
                     cachedImageShader.setFilterMode(BitmapShader.FILTER_MODE_LINEAR);
                 }
-                // Identity matrix: scaling is applied in AGSL via sampleScale.
+                // Identity matrix: mapping, including perspective, is explicit in AGSL.
                 cachedImageShader.setLocalMatrix(null);
                 runtimeShader.setInputShader("image", cachedImageShader);
                 float min = Math.max(1f, Math.min(bounds.width(), bounds.height()));
                 float[] corner = clampedRadii(bounds);
                 runtimeShader.setFloatUniform("size", bounds.width(), bounds.height());
-                // COUI submenu reveal sets drawable bounds to RoundFrameLayout.f15656b (a
-                // growing sub-rect) while BackdropCapture stays full-view. Offset sampling
-                // so the plate tracks the reveal; (0,0) when bounds cover the view.
-                float originX = 0f;
-                float originY = 0f;
-                float scaleX = sampleScale[0];
-                float scaleY = sampleScale[1];
-                boolean snapshotMatchesBounds = snapshot.getWidth() == bounds.width()
-                        && snapshot.getHeight() == bounds.height();
-                if (!snapshotMatchesBounds) {
-                    if (snapshot.getWidth() < bounds.width()
-                            || snapshot.getHeight() < bounds.height()) {
-                        // Accept-grow plate: backdrop was sampled at the resting host size
-                        // while the glass is drawn at the scaled (larger) size. Shrink the
-                        // sampling scale so the backdrop maps 1:1 onto the plate — otherwise
-                        // the texture is squeezed to the top-left and the edges CLAMP.
-                        scaleX = snapshot.getWidth() / (float) bounds.width();
-                        scaleY = snapshot.getHeight() / (float) bounds.height();
-                    } else if (owner != null) {
-                        int ow = owner.getWidth();
-                        int oh = owner.getHeight();
-                        if (ow > 0 && oh > 0
-                                && (bounds.left != 0 || bounds.top != 0
-                                || bounds.width() != ow || bounds.height() != oh)) {
-                            originX = bounds.left;
-                            originY = bounds.top;
-                        }
-                    }
+                if (sharedWallpaper) {
+                    SharedWallpaperBackdrop.coordinates(owner, bounds.left, bounds.top, sampleMatrix);
+                } else {
+                    captureCoordinates(snapshot, shaderBitmap, bounds, sampleScale);
                 }
-                // The blur texture stays small; scale sampling coordinates instead of upscaling it.
-                scaleX *= shaderBitmap.getWidth() / (float) snapshot.getWidth();
-                scaleY *= shaderBitmap.getHeight() / (float) snapshot.getHeight();
-                runtimeShader.setFloatUniform("sampleOrigin", originX, originY);
-                runtimeShader.setFloatUniform("sampleScale", scaleX, scaleY);
+                runtimeShader.setFloatUniform("sampleMatrixX", sampleMatrix[0], sampleMatrix[1], sampleMatrix[2]);
+                runtimeShader.setFloatUniform("sampleMatrixY", sampleMatrix[3], sampleMatrix[4], sampleMatrix[5]);
+                runtimeShader.setFloatUniform("sampleMatrixW", sampleMatrix[6], sampleMatrix[7], sampleMatrix[8]);
                 // float4 must use the 4-float overload; float[] is for float array uniforms.
                 runtimeShader.setFloatUniform("cornerRadii",
                         corner[0], corner[1], corner[2], corner[3]);
@@ -324,6 +303,43 @@ public final class GlassDrawable extends Drawable {
         }
         canvas.restoreToCount(save);
         drawHighlight(canvas);
+    }
+
+    /** Map existing target-local captures, including reveal bounds and reduced blur textures. */
+    private void captureCoordinates(Bitmap snapshot, Bitmap shaderBitmap, Rect bounds,
+            float[] sampleScale) {
+        float originX = 0f, originY = 0f;
+        float scaleX = sampleScale[0], scaleY = sampleScale[1];
+        boolean snapshotMatchesBounds = snapshot.getWidth() == bounds.width()
+                && snapshot.getHeight() == bounds.height();
+        if (!snapshotMatchesBounds) {
+            if (snapshot.getWidth() < bounds.width()
+                    || snapshot.getHeight() < bounds.height()) {
+                // Accept-grow plate: backdrop was sampled at the resting host size
+                // while the glass is drawn at the scaled (larger) size. Shrink the
+                // sampling scale so the backdrop maps 1:1 onto the plate — otherwise
+                // the texture is squeezed to the top-left and the edges CLAMP.
+                scaleX = snapshot.getWidth() / (float) bounds.width();
+                scaleY = snapshot.getHeight() / (float) bounds.height();
+            } else if (owner != null) {
+                int ow = owner.getWidth();
+                int oh = owner.getHeight();
+                if (ow > 0 && oh > 0
+                        && (bounds.left != 0 || bounds.top != 0
+                        || bounds.width() != ow || bounds.height() != oh)) {
+                    originX = bounds.left;
+                    originY = bounds.top;
+                }
+            }
+        }
+        // The blur texture stays small; scale sampling coordinates instead of upscaling it.
+        scaleX *= shaderBitmap.getWidth() / (float) snapshot.getWidth();
+        scaleY *= shaderBitmap.getHeight() / (float) snapshot.getHeight();
+        sampleMatrix[0] = scaleX; sampleMatrix[1] = 0f;
+        sampleMatrix[2] = originX * scaleX;
+        sampleMatrix[3] = 0f; sampleMatrix[4] = scaleY;
+        sampleMatrix[5] = originY * scaleY;
+        sampleMatrix[6] = 0f; sampleMatrix[7] = 0f; sampleMatrix[8] = 1f;
     }
 
     private void drawHighlight(Canvas canvas) {

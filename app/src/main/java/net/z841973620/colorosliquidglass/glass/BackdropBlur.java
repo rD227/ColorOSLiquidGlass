@@ -3,11 +3,10 @@ package net.z841973620.colorosliquidglass.glass;
 import android.graphics.Bitmap;
 
 /**
- * CPU stack-blur for desktop glass backdrops.
+ * CPU stack-blur for target-local content captures.
  * <p>
- * Console preview uses Compose {@code RenderEffect} blur; Launcher glass feeds a bitmap into
- * AGSL, so blur must happen on that bitmap. The old AGSL 5-tap ±radius cross only echoed
- * the image and looked like ghosting.
+ * Ordinary folder wallpaper uses a shared GPU texture. Content overlays still feed cropped
+ * bitmaps into AGSL and use this independent, area-filtered low-resolution blur.
  */
 public final class BackdropBlur {
     private BackdropBlur() {}

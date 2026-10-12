@@ -22,14 +22,15 @@ import java.util.Map;
 import java.util.WeakHashMap;
 
     /**
-     * Captures a target-local backdrop for one Launcher folder background.
+     * Schedules backdrop updates. Ordinary desktop folders sample SharedWallpaperBackdrop;
+     * content overlays and explicit previews still need target-local captures.
      * Capture bitmaps stay 1:1 with the glass view so backdrop detail matches screen pixels.
      * Sampling runs every frame while the glass is moving (geometry / drag / wallpaper zoom);
      * while stationary the last good frame is kept (no idle re-sample).
      * <p>
      * Dragged-folder glass paints wallpaper + {@link DesktopIconOverlay} without hiding
-     * {@code *DragView} (hiding flickers). Idle folder icons still hide the host and
-     * software-draw the hierarchy.
+     * {@code *DragView} (hiding flickers). Ordinary folders no longer hide their host or
+     * software-draw the launcher hierarchy on each page-scroll frame.
      */
     final class BackdropCapture implements ViewTreeObserver.OnPreDrawListener,
             View.OnAttachStateChangeListener {
@@ -210,6 +211,11 @@ import java.util.WeakHashMap;
             capture.rootRef = new WeakReference<>(root);
         }
         if (capture.recording) return;
+        if (WINDOW_OVERRIDE.get() != null) capture.explicitWindowSample = true;
+        if (capture.usesSharedWallpaper()) {
+            target.invalidate();
+            return;
+        }
         // Lock affordance: wallpaper is static — skip re-bake when we already
         // hold a meaningful frame at the current host size (OEM hooks spam apply often).
         // RapidReaction 分屏/浮窗 must recapture as Overview wallpaper zoom settles.
@@ -253,6 +259,26 @@ import java.util.WeakHashMap;
 
     /** Optional explicit window origin for {@link #forceCaptureAtWindow}. */
     private static final ThreadLocal<int[]> WINDOW_OVERRIDE = new ThreadLocal<>();
+
+    // An explicit preview origin belongs to the captured frame until normal traversal resumes.
+    private boolean explicitWindowSample;
+    private final float[] sharedCoordinates = new float[9];
+    private final float[] previousSharedCoordinates = new float[9];
+
+    private boolean updateSharedCoordinates(View target) {
+        SharedWallpaperBackdrop.coordinates(target, 0f, 0f, sharedCoordinates);
+        boolean changed = !java.util.Arrays.equals(sharedCoordinates, previousSharedCoordinates);
+        System.arraycopy(sharedCoordinates, 0, previousSharedCoordinates, 0, 9);
+        return changed;
+    }
+
+    boolean usesSharedWallpaper() {
+        View target = targetRef.get();
+        return target != null && !explicitWindowSample && isFolderIconView(captureOwner(target))
+                && overlaySourceOf(target) == null && dragViewAncestor(target) == null
+                && !isDesktopPopupGlass(target)
+                && !isWallpaperOnlyGlass(target) && !isLockContentGlass(target);
+    }
 
     /**
      * Marks every live capture dirty. Used after unlock / resume when wallpaper and
@@ -570,6 +596,12 @@ import java.util.WeakHashMap;
         if (target == null) return null;
         synchronized (CAPTURES) {
             BackdropCapture capture = CAPTURES.get(target);
+            // Software folder composites need a local bitmap. Materialize it only on demand;
+            // ordinary hardware folder drawing samples the shared wallpaper directly.
+            if (capture != null && capture.usesSharedWallpaper() && !capture.recording
+                    && target.getWidth() > 0 && target.getHeight() > 0) {
+                capture.capture(rootOf(target), target, true);
+            }
             return capture == null ? null : capture.bitmap();
         }
     }
@@ -587,6 +619,7 @@ import java.util.WeakHashMap;
         View target = targetRef.get();
         View root = rootRef == null ? null : rootRef.get();
         if (target == null || root == null) return true;
+        explicitWindowSample = false;
         // During resize-frame drawing ColorOS sets mBgView to INVISIBLE and paints on the
         // FolderIcon canvas instead. Keep sampling while the folder icon itself is shown.
         View owner = captureOwner(target);
@@ -610,6 +643,15 @@ import java.util.WeakHashMap;
             dirty = true;
             skipCaptureFromSelfInvalidate = false;
             scheduleUnlockFolderInvalidatePump();
+        }
+        if (usesSharedWallpaper()) {
+            // Root-space wallpaper content is independent of a folder's geometry. Only the
+            // shader transform changes on scroll/scale, including the final settling frame.
+            // Integer window positions alone miss fractional translation and rotationY.
+            boolean mappingChanged = updateSharedCoordinates(target);
+            if (mappingChanged || geometryChanged || dirty) target.invalidate();
+            dirty = false;
+            return true;
         }
         if (lockContent) {
             // Lock clock / notification capsules change even while the bar is stationary.
@@ -1047,7 +1089,7 @@ import java.util.WeakHashMap;
                 } catch (Throwable ignored) {
                 }
                 canvas.restore();
-            } else if (isWallpaperOnlyGlass(target)) {
+            } else if (isWallpaperOnlyGlass(target) || usesSharedWallpaper()) {
                 translateRootToTarget(root, target, canvas);
                             drawWallpaper(root, canvas, target);
                 // RapidReaction capsules sit under the live app: desktop/wallpaper only.
@@ -1092,7 +1134,7 @@ import java.util.WeakHashMap;
                 }
             }
             if (!desktopPopupGlass) {
-                boolean wallpaperOnly = isWallpaperOnlyGlass(target);
+                boolean wallpaperOnly = isWallpaperOnlyGlass(target) || usesSharedWallpaper();
                 boolean lockContent = isLockContentGlass(target);
                 boolean behindScreen = BehindDisplayCapture.isSysUiLiveGlass(target);
                 boolean seedChanged = dragGlass && seedGen != publishedDragSeedGeneration;
@@ -1339,7 +1381,7 @@ import java.util.WeakHashMap;
         } catch (Throwable ignored) { }
     }
 
-    private static Drawable resolveWallpaperDrawable(android.content.Context context, View target) {
+    static Drawable resolveWallpaperDrawable(android.content.Context context, View target) {
         WallpaperManager wm = WallpaperManager.getInstance(context);
         if (wantsLockWallpaper(target)) {
             Drawable lock = peekOplusLockWallpaper(context);
