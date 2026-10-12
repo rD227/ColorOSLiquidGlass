@@ -66,6 +66,9 @@ public final class BehindDisplayCapture {
         boolean pinMenuRegion;
         /** Epoch captured when this host opened LIVE — stale after forceClose. */
         int openEpoch = -1;
+
+        final CaptureCadence cadence = new CaptureCadence();
+        volatile int captureEpoch;
     }
 
     private static final class CaptureRequest {
@@ -80,6 +83,7 @@ public final class BehindDisplayCapture {
         final float density;
         final SurfaceControl exclude;
         final float blurRadiusPx;
+        final int epoch;
 
         CaptureRequest(View host, HostState state, Mode mode, int width, int height,
                 int screenX, int screenY, Rect floatBounds, float density, SurfaceControl exclude,
@@ -95,6 +99,7 @@ public final class BehindDisplayCapture {
             this.density = density;
             this.exclude = exclude;
             this.blurRadiusPx = blurRadiusPx;
+            this.epoch = state.captureEpoch;
         }
     }
 
@@ -327,6 +332,10 @@ public final class BehindDisplayCapture {
         if (glass != null) blurPx = glass.blurRadiusPx();
 
         boolean volume = isVolumeGlass(host);
+        long nowNanos = android.os.SystemClock.elapsedRealtimeNanos();
+        int fps = glass == null ? 30 : glass.volumeBackdropFps();
+        boolean immediate = s.forceOnce || s.cache == null;
+        if (volume && !s.cadence.isDue(nowNanos, immediate)) return;
         Rect sampleRect = volume
                 ? volumeGlassScreenRect(host)
                 : new Rect(loc[0], loc[1], loc[0] + width, loc[1] + height);
@@ -378,10 +387,7 @@ public final class BehindDisplayCapture {
             Bitmap region = DesktopBackdropClient.pollFrame();
             boolean newPlate = region != null;
             if (region == null) region = DesktopBackdropClient.peekFrame();
-            if (region == null && !DesktopBackdropClient.hasFrame()) {
-                region = DesktopBackdropClient.awaitFirstFrame(64L);
-                newPlate = region != null;
-            }
+            // The stream publishes asynchronously. Never wait for its first frame on the UI thread.
             if (region != null && !region.isRecycled()) {
                 boolean need = volume || newPlate || force
                         || Float.compare(blurPx, s.lastBlurPx) != 0
@@ -389,6 +395,7 @@ public final class BehindDisplayCapture {
                         || s.cache.getWidth() != sampleW || s.cache.getHeight() != sampleH
                         || geometryChanged;
                 if (need) {
+                    if (volume && !s.capturing.get()) s.cadence.started(nowNanos, fps, immediate);
                     applyDesktopRegionFrame(host, s, region,
                             sampleX, sampleY, sampleW, sampleH, blurPx);
                 }
@@ -404,6 +411,7 @@ public final class BehindDisplayCapture {
         }
 
         if (!s.capturing.compareAndSet(false, true)) return;
+        if (volume) s.cadence.started(nowNanos, fps, immediate);
 
         float density = host.getResources().getDisplayMetrics().density;
         Object exclude = surfaceControlOf(host);
@@ -414,6 +422,10 @@ public final class BehindDisplayCapture {
                 exclude instanceof SurfaceControl ? (SurfaceControl) exclude : null, blurPx);
 
         WORKER.execute(() -> {
+            if (!s.streaming || s.captureEpoch != req.epoch) {
+                s.capturing.set(false);
+                return;
+            }
             Bitmap shot = null;
             try {
                 shot = captureDisplayCrop(req);
@@ -422,6 +434,11 @@ public final class BehindDisplayCapture {
             }
             final Bitmap frame = shot;
             MAIN.post(() -> {
+                if (!s.streaming || s.captureEpoch != req.epoch || !host.isAttachedToWindow()) {
+                    recycleQuiet(frame);
+                    s.capturing.set(false);
+                    return;
+                }
                 if (frame != null && !frame.isRecycled()) {
                     synchronized (s) {
                         Bitmap old = s.cache;
@@ -473,6 +490,8 @@ public final class BehindDisplayCapture {
             return;
         }
         s.streaming = false;
+        s.captureEpoch++;
+        s.cadence.reset();
         s.forceOnce = false;
         s.stickyDesktop = false;
         s.noCaptureFallback = false;
@@ -548,8 +567,15 @@ public final class BehindDisplayCapture {
      */
     private static void applyDesktopRegionFrame(View host, HostState s, Bitmap region,
             int screenX, int screenY, int width, int height, float blurPx) {
+        // Keep the last completed blur while the worker is busy. Do not replace it with
+        // an unblurred scratch crop or mutate that crop on every redraw.
+        boolean blur = blurPx >= 0.5f;
+        if (blur && !s.capturing.compareAndSet(false, true)) return;
         Bitmap mapped = mapRegionToHost(s, region, screenX, screenY, width, height);
-        if (mapped == null || mapped.isRecycled()) return;
+        if (mapped == null || mapped.isRecycled()) {
+            if (blur) s.capturing.set(false);
+            return;
+        }
 
         if (blurPx < 0.5f) {
             synchronized (s) {
@@ -560,21 +586,6 @@ public final class BehindDisplayCapture {
                 }
                 s.cache = mapped;
                 s.generation++;
-            }
-            host.invalidate();
-            return;
-        }
-
-        if (!s.capturing.compareAndSet(false, true)) {
-            synchronized (s) {
-                if (s.cache != mapped) {
-                    if (s.cache != null && s.cache != s.cropScratch
-                            && !DesktopBackdropClient.isSharedFrame(s.cache)) {
-                        recycleQuiet(s.cache);
-                    }
-                    s.cache = mapped;
-                    s.generation++;
-                }
             }
             host.invalidate();
             return;
@@ -593,7 +604,13 @@ public final class BehindDisplayCapture {
             return;
         }
         final float radius = blurPx;
+        final int epoch = s.captureEpoch;
         WORKER.execute(() -> {
+            if (!s.streaming || s.captureEpoch != epoch) {
+                recycleQuiet(toBlur);
+                s.capturing.set(false);
+                return;
+            }
             Bitmap blurred = null;
             try {
                 blurred = HardwareBlur.blur(toBlur, radius);
@@ -604,7 +621,7 @@ public final class BehindDisplayCapture {
             final Bitmap discard = (frame != toBlur) ? toBlur : null;
             MAIN.post(() -> {
                 try {
-                    if (!s.streaming || !host.isAttachedToWindow()) {
+                    if (!s.streaming || s.captureEpoch != epoch || !host.isAttachedToWindow()) {
                         recycleQuiet(frame);
                         recycleQuiet(discard);
                         return;
