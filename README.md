@@ -4,7 +4,7 @@
 
 对源项目做出的修改写在这里
 
-ai写得太快了，但是我尽量的去看了，看不完还用其他agent继续看
+ai写得太快了，但是我尽量的去看了，~~但是原仓库压一堆写我也看得头疼，~~ 看不完还用其他agent继续看
 
 大概明显的修改如下
 
@@ -25,7 +25,7 @@ ai写得太快了，但是我尽量的去看了，看不完还用其他agent继�
 
 使用 LSPosed API 101
 
-目前适用于 ColorOS 16 (仅在金标系统上测试) 和 ColorOS 14，其它版本未测试 (实现液态玻璃效果至少需要 Android 13)
+目前适用于 ColorOS 16 (仅在金标系统上测试：原仓库 新加的玻璃没有在金标上测试，只在211紫标上测试) 和 ColorOS 14，其它版本未测试 (实现液态玻璃效果至少需要 Android 13)
 
 ColorOS 16:<br>
 <img width="228" height="495" alt="Screenshot_01" src="imgs/Screenshot_01.jpg" /> <img width="228" height="495" alt="Screenshot_02" src="imgs/Screenshot_02.jpg" /> <img width="228" height="495" alt="Screenshot_03" src="imgs/Screenshot_03.png" />
