@@ -149,6 +149,7 @@ public final class GlassDrawable extends Drawable {
     private int cachedSnapshotGeneration;
     private BitmapShader cachedImageShader;
     private final float[] sampleMatrix = new float[9];
+    private PopupRenderEffect popupEffect;
     private boolean shaderFailureLogged;
     private int alpha = 255;
 
@@ -250,9 +251,10 @@ public final class GlassDrawable extends Drawable {
                 && (sharedWallpaper || (snapshot != null && !snapshot.isRecycled()))) {
             try {
                 float blurPx = effectiveShaderBlurRadius();
+                boolean gpuPopup = "colg_desktop_popup".equals(owner.getTag()) && snapshot != null;
                 Bitmap shaderBitmap = sharedWallpaper
                         ? SharedWallpaperBackdrop.texture(owner, blurPx)
-                        : blurredBackdrop(snapshot, blurPx);
+                        : gpuPopup ? snapshot : blurredBackdrop(snapshot, blurPx);
                 if (shaderBitmap != cachedSnapshot || cachedImageShader == null) {
                     cachedSnapshot = shaderBitmap;
                     cachedImageShader = new BitmapShader(
@@ -295,7 +297,13 @@ public final class GlassDrawable extends Drawable {
                 glassPaint.setShader(runtimeShader);
                 glassPaint.setAlpha(alpha);
                 canvas.translate(bounds.left, bounds.top);
-                canvas.drawRect(0f, 0f, bounds.width(), bounds.height(), glassPaint);
+                if (gpuPopup) {
+                    if (popupEffect == null) popupEffect = new PopupRenderEffect();
+                    popupEffect.draw(canvas, snapshot, runtimeShader, blurPx,
+                            bounds.width(), bounds.height(), alpha, glassPaint.getColorFilter());
+                } else {
+                    canvas.drawRect(0f, 0f, bounds.width(), bounds.height(), glassPaint);
+                }
                 canvas.translate(-bounds.left, -bounds.top);
                 drewBackdrop = true;
             } catch (Throwable error) {

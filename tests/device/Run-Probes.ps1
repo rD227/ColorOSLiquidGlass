@@ -15,8 +15,11 @@ if ($LASTEXITCODE) { throw 'Probe compilation failed; build assembleRelease firs
 $kotlinArguments = @(
     ('"' + (Join-Path $PSScriptRoot 'ExpandableNotificationRow.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'HeadsUpRouteProbe.kt').Replace('\', '/') + '"'),
+    ('"' + (Join-Path $PSScriptRoot 'NotificationAndPopupProbe.kt').Replace('\', '/') + '"'),
+    ('"' + (Join-Path $PSScriptRoot 'OemNotificationContractProbe.kt').Replace('\', '/') + '"'),
     '-classpath', ('"' + "$androidJar;$appClasses;$kotlinClasses".Replace('\', '/') + '"'),
     '-language-version', '2.0', '-api-version', '2.0',
+    ('"-Xfriend-paths=' + $kotlinClasses.Replace('\', '/') + '"'),
     '-d', ('"' + $probeDir.Replace('\', '/') + '"')
 )
 $argumentFile = Join-Path $probeDir 'kotlin.args'
@@ -37,3 +40,5 @@ foreach ($name in $probeNames) {
 }
 & $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.HeadsUpRouteProbeKt'
 if ($LASTEXITCODE) { throw 'Heads-up route probe failed' }
+& $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.NotificationAndPopupProbeKt'
+if ($LASTEXITCODE) { throw 'Notification and popup probe failed' }
