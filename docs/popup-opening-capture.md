@@ -109,3 +109,23 @@ Cos14 软件合成和拖动路径保持原有行为。缓存显式标记 `shared
 下一轮应在相同大菜单、相同桌面上重复长按，比较 totalMs 分布及具体阶段。
 若要严格 A/B，可使用同轮保存的 diagnostics-only APK（仅计时，仍为 1.3.9）和修复版；
 两者诊断代码相同。先测旧版再测新版可避免 versionCode 降级限制。
+
+
+## 1.3.11：拆分层级查找入口
+
+1.3.10 实际长按记录中，`traversal` 平均约 15.24 ms，其中线程 CPU 约 15.01 ms。
+原来的合并计时无法判断具体哪个入口最慢。1.3.11 只拆分日志标签，绘制、采样与缓存策略不变：
+
+| 新日志字段 | 对应工作 |
+| --- | --- |
+| collectDragSources | 遍历 View 树收集正在拖动的图标来源 |
+| collectDragControllerSources | 查找 Launcher / DragController，读取拖动来源 |
+| findOpenFolderView | 查找打开的文件夹，包括 OEM 方法、View 树和图标关联的查询 |
+| iconContainersUnderRegion | 查找玻璃覆盖区域内的桌面图标容器与底栏容器 |
+
+四项均保持 `wallMs/cpuMs/calls` 格式；其排除子阶段后的耗时之和对应之前的 `traversal`。
+`collectDragSources` 的递归调用继续合并到最外层：调用次数表示外层查找次数，不是访问的 View 数量。
+仍只记录每个菜单宿主前 12 次采样，默认关闭，不逐个 View 输出日志。
+
+安装并重启桌面组件后，用相同的大菜单反复打开/关闭约 30 秒，再比较各入口的墙钟和 CPU 时间。
+若某个入口成为主要热点，再针对它细分反射查找或遍历；此版本不预先改动这些行为，以保持测量可比。

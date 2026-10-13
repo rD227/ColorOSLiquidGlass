@@ -759,7 +759,7 @@ final class DesktopIconOverlay {
 
     /** DragController.mDragObject.originalView — ColorOS may not keep content on DragView. */
     private static void collectDragControllerSources(View seed, java.util.HashSet<View> out) {
-        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("traversal")) {
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("collectDragControllerSources")) {
             if (seed == null || out == null) return;
             try {
                 Object launcher = resolveLauncherAny(seed);
@@ -1444,7 +1444,7 @@ final class DesktopIconOverlay {
     }
 
     private static View findOpenFolderView(View seed) {
-        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("traversal")) {
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("findOpenFolderView")) {
             try {
                 Object launcher = resolveLauncherAny(seed);
                 if (launcher != null) {
@@ -1723,7 +1723,7 @@ final class DesktopIconOverlay {
      * painting the origin would wrongly place the icon at the home cell.
      */
     private static void collectDragSources(View root, java.util.HashSet<View> out) {
-        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("traversal")) {
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("collectDragSources")) {
             if (root == null || out == null) return;
             if (isDragView(root) && root.getVisibility() != View.GONE
                     && root.getWidth() > 0 && root.getHeight() > 0) {
@@ -3574,7 +3574,7 @@ final class DesktopIconOverlay {
     }
 
     private static List<ViewGroup> iconContainersUnderRegion(View seed, RectF region) {
-        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("traversal")) {
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("iconContainersUnderRegion")) {
             List<ViewGroup> out = new ArrayList<>();
             if (region == null) return out;
             ViewGroup primary = shortcutsAndWidgetsOf(seed);
