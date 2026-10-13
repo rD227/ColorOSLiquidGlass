@@ -709,9 +709,6 @@ public final class ModuleMain extends XposedModule {
                         if (menuStyleEnabled()) {
                             Object popup = chain.getThisObject();
                             captureDesktopPopupGlassAfterOpen(popup);
-                            if (popup instanceof View) {
-                                ((View) popup).post(() -> captureDesktopPopupGlassAfterOpen(popup));
-                            }
                         }
                     } catch (Throwable e) {
                         log(5, TAG, "openAnimationEnd popup glass capture failed", e);
@@ -874,7 +871,7 @@ public final class ModuleMain extends XposedModule {
             if (glass != null) {
                 if (host.getBackground() != glass) host.setBackground(glass);
                 host.setTag(TAG_DESKTOP_POPUP);
-                GlassInstaller.forceCapture(host);
+                GlassInstaller.requestPopupCapture(host);
                 host.invalidate();
             } else {
                 installDesktopPopupPanelGlass(host);
@@ -998,6 +995,12 @@ public final class ModuleMain extends XposedModule {
         clearDeepShortcutRowFills(host);
         Runnable install = () -> {
             if (!menuStyleEnabled() || !host.isAttachedToWindow()) return;
+            // Several nested OEM entry points reach installation during one open.
+            GlassDrawable existing = GlassInstaller.get(host);
+            if (existing != null && host.getBackground() == existing) {
+                GlassInstaller.requestPopupCapture(host);
+                return;
+            }
             clearDeepShortcutRowFills(host);
             float[] radii = readPopupPanelRadii(host);
             if (radii == null && host.getBackground() instanceof GlassDrawable) {
@@ -1020,15 +1023,13 @@ public final class ModuleMain extends XposedModule {
                 float r = resolvePopupCornerFallback(host);
                 glass.setCornerRadii(r, r, r, r);
             }
-            // Same icon-only capture as open/settle — wallpaper-only samples are rejected in
-            // BackdropCapture, so early install forceCapture cannot freeze a blank plate.
+            // Let layout/animation geometry settle for this frame, then sample once in PreDraw.
             if (host.getWidth() <= 0 || host.getHeight() <= 0) return;
-            GlassInstaller.forceCapture(host);
+            GlassInstaller.requestPopupCapture(host);
             host.invalidate();
         };
         if (host.getWidth() > 0 && host.getHeight() > 0) {
             install.run();
-            host.post(install);
         } else {
             host.post(install);
         }
@@ -1047,7 +1048,7 @@ public final class ModuleMain extends XposedModule {
                 if (host.getWidth() > 0 && host.getHeight() > 0) {
                     View workspace = findWorkspaceNear(host);
                     if (workspace != null) GlassInstaller.setOverlaySource(host, workspace);
-                    GlassInstaller.forceCapture(host);
+                    GlassInstaller.requestPopupCapture(host);
                     host.invalidate();
                 }
             }

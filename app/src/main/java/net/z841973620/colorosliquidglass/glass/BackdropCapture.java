@@ -197,7 +197,15 @@ import java.util.WeakHashMap;
         }
     }
 
-    /** Forces an immediate target-local capture, used while resize-frame geometry is animating. */
+    /** Request a popup sample before drawing, merging all requests for the same traversal. */
+    static void requestPopupCapture(View target) {
+        BackdropCapture capture = register(target);
+        capture.skipCaptureFromSelfInvalidate = false;
+        capture.scheduleDesktopPopupPump();
+        // register marks dirty and invalidates. All opening callbacks share the next PreDraw.
+    }
+
+    /** Immediate capture remains available for explicit previews and other non-popup users. */
     static void forceCapture(View target) {
         if (target == null || target.getWidth() <= 0 || target.getHeight() <= 0) return;
         GlassDrawable installed = GlassInstaller.get(target);
@@ -472,10 +480,7 @@ import java.util.WeakHashMap;
             }
         }
         if (animating) {
-            // Open-anim priority: capture immediately so mid-release cannot freeze first.
-            try {
-                forceCapture(target);
-            } catch (Throwable ignored) { }
+            requestPopupCapture(target);
         }
         capture.scheduleDesktopPopupPump();
     }

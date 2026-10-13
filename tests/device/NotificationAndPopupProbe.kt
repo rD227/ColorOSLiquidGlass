@@ -46,6 +46,13 @@ fun main() {
     val capture = captures[card]!!
     BackdropCapture::class.java.getDeclaredField("frontBitmap").apply { isAccessible = true }.set(capture, source)
     BackdropCapture::class.java.getDeclaredField("validFrame").apply { isAccessible = true }.setBoolean(capture, true)
+    val sourceRevision = source.generationId
+    repeat(8) { GlassInstaller.requestPopupCapture(card) }
+    check(BackdropCapture::class.java.getDeclaredField("backBitmap").apply { isAccessible = true }.get(capture) == null) {
+        "Opening callbacks must not allocate or capture before PreDraw"
+    }
+    check(BackdropCapture::class.java.getDeclaredField("frontBitmap").apply { isAccessible = true }.get(capture) === source)
+    check(source.generationId == sourceRevision)
     fun render(): Bitmap = GpuBackdropTexture.render(128, 64, 0f) { glass.draw(it) }.copy(Bitmap.Config.ARGB_8888, false)!!
     val blurred = render()
     val nearEdge = Color.red(blurred.getPixel(60, 32))
@@ -63,5 +70,5 @@ fun main() {
         "GPU popup reused a stale source"
     }
     BackdropCapture.unregister(card)
-    println("PASS: shared card/header capture ownership, last-client cleanup, real popup GPU blur, radius zero, live source updates, no CPU blur")
+    println("PASS: shared card/header ownership, cleanup, coalesced popup requests, GPU blur, zero radius, live updates, no CPU blur")
 }

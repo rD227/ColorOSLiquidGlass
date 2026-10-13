@@ -145,6 +145,11 @@ public final class GlassInstaller {
         BackdropCapture.forceCapture(view);
     }
 
+    /** Coalesce popup lifecycle requests into the next traversal, before the first draw. */
+    public static void requestPopupCapture(View view) {
+        BackdropCapture.requestPopupCapture(view);
+    }
+
     /**
      * Keep options-menu backdrop sampling alive for the whole open animation (needed after
      * mid-release when DragView stops invalidating the tree).
