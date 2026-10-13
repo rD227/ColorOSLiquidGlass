@@ -1008,7 +1008,7 @@ final class DesktopIconOverlay {
                 if (scale <= 0f) scale = 0.45f;
                 float size = intrinsic * scale;
                 Drawable drawable = glyphs.get(i);
-                Bitmap bitmap = softwareBitmap(fastBitmapOf(drawable));
+                Bitmap bitmap = bitmapForCanvas(fastBitmapOf(drawable), canvas);
                 if (bitmap == null || bitmap.isRecycled()) {
                     bitmap = rasterizeDrawable(drawable, Math.max(1, Math.round(size)),
                             Math.max(1, Math.round(size)));
@@ -1042,7 +1042,7 @@ final class DesktopIconOverlay {
             float cx = inset + col * (cell + gap) + cell * 0.5f;
             float cy = inset + row * (cell + gap) + cell * 0.5f;
             Drawable drawable = glyphs.get(i);
-            Bitmap bitmap = softwareBitmap(fastBitmapOf(drawable));
+            Bitmap bitmap = bitmapForCanvas(fastBitmapOf(drawable), canvas);
             if (bitmap == null || bitmap.isRecycled()) {
                 bitmap = rasterizeDrawable(drawable, Math.max(1, Math.round(icon)),
                         Math.max(1, Math.round(icon)));
@@ -1217,7 +1217,7 @@ final class DesktopIconOverlay {
             Rect bounds = drawable.getBounds();
             float size = iconSize > 0f ? iconSize
                     : Math.max(1, bounds.isEmpty() ? 48 : bounds.width());
-            Bitmap bitmap = softwareBitmap(fastBitmapOf(drawable));
+            Bitmap bitmap = bitmapForCanvas(fastBitmapOf(drawable), canvas);
             if (bitmap == null) {
                 bitmap = rasterizeDrawable(drawable, Math.round(size), Math.round(size));
             }
@@ -2238,7 +2238,7 @@ final class DesktopIconOverlay {
             int ih = Math.max(1, iconSrc.getHeight() > 0 ? iconSrc.getHeight() : positionHost.getHeight());
             localBounds = new Rect(0, 0, iw, ih);
         }
-        Bitmap bitmap = softwareBitmap(fastBitmapOf(drawable));
+        Bitmap bitmap = bitmapForCanvas(fastBitmapOf(drawable), canvas);
         if ((bitmap == null || bitmap.isRecycled() || isMostlyEmpty(bitmap)) && drawable != null) {
             bitmap = rasterizeDrawable(drawable,
                     Math.max(1, localBounds.width()), Math.max(1, localBounds.height()));
@@ -2652,7 +2652,7 @@ final class DesktopIconOverlay {
         RectF dest = mapItemRectToTarget(item, localBounds, globalToTarget);
         if (dest == null || dest.width() < 1f || dest.height() < 1f) return;
 
-        Bitmap bitmap = softwareBitmap(fastBitmapOf(drawable));
+        Bitmap bitmap = bitmapForCanvas(fastBitmapOf(drawable), canvas);
         if (bitmap == null) {
             bitmap = rasterizeDrawable(drawable, localBounds.width(), localBounds.height());
         }
@@ -3435,7 +3435,7 @@ final class DesktopIconOverlay {
                 Rect bounds = drawable.getBounds();
                 float size = iconSize > 0f ? iconSize
                         : Math.max(1, bounds.isEmpty() ? 48 : bounds.width());
-                Bitmap bitmap = softwareBitmap(fastBitmapOf(drawable));
+                Bitmap bitmap = bitmapForCanvas(fastBitmapOf(drawable), canvas);
                 if (bitmap == null) {
                     bitmap = rasterizeDrawable(drawable, Math.round(size), Math.round(size));
                 }
@@ -3523,6 +3523,15 @@ final class DesktopIconOverlay {
         return null;
     }
 
+    /** Drawing on a hardware canvas needs no CPU readback, including preview fallback paths. */
+    private static Bitmap bitmapForCanvas(Bitmap bitmap, Canvas canvas) {
+        if (canvas.isHardwareAccelerated()) {
+            return bitmap == null || bitmap.isRecycled() ? null : bitmap;
+        }
+        return softwareBitmap(bitmap);
+    }
+
+    /** Fresh, caller-owned conversion for pixel inspection and live drag snapshots. */
     private static Bitmap softwareBitmap(Bitmap bitmap) {
         try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("bitmap_copy")) {
             if (bitmap == null || bitmap.isRecycled()) return null;
