@@ -61,6 +61,11 @@ private fun checkFolderHardwareComposite(context: Context, root: FrameLayout) {
     root.removeView(folder)
 }
 
+private object OpenFolderQueryFixture {
+    @JvmStatic fun empty(launcher: Any): View? = null
+    @JvmStatic fun fails(launcher: Any): View? = error("Expected probe failure")
+}
+
 private fun checkCaptureTrace(host: View) {
     if (!android.util.Log.isLoggable("ColgPopupPerf", android.util.Log.DEBUG)) {
         check(PopupCaptureTrace.section("disabled") == null)
@@ -74,7 +79,22 @@ private fun checkCaptureTrace(host: View) {
             android.os.SystemClock.sleep(15)
         }
     }
+    // Exercise the real reflection query: a successful null result differs from API failure.
+    val query = DesktopIconOverlay::class.java.getDeclaredMethod(
+        "invokeOpenFolder", Any::class.java, ClassLoader::class.java, String::class.java, String::class.java
+    ).apply { isAccessible = true }
+    val fixture = OpenFolderQueryFixture::class.java
+    for (method in listOf("empty", "fails", "missing")) {
+        check(query.invoke(null, Any(), fixture.classLoader, fixture.name, method) == null)
+    }
+    check(query.invoke(null, Any(), fixture.classLoader, fixture.name + "Absent", "empty") == null)
     PopupCaptureTrace.end(start, host, true)
+    val resultsField = PopupCaptureTrace::class.java.getDeclaredField("outcomes").apply { isAccessible = true }
+    val results = resultsField.get(null) as Map<*, *>
+    check(results[fixture.name + ".returned_null"] == 1)
+    check(results[fixture.name + ".invoke_failed"] == 1)
+    check(results[fixture.name + ".method_missing"] == 1)
+    check(results[fixture.name + "Absent.class_missing"] == 1)
     val field = PopupCaptureTrace::class.java.getDeclaredField("stages").apply { isAccessible = true }
     val stages = field.get(null) as Map<*, *>
     val outer = stages["test_outer"] as PopupCaptureTrace.Totals
@@ -83,6 +103,10 @@ private fun checkCaptureTrace(host: View) {
     check(inner.wall >= 10_000_000L) { "Nested timer lost the measured wait" }
     check(PopupCaptureTrace.section("finished") == null)
     println("PASS: opt-in stage timers, nested scopes, recursion collapse and cleanup")
+    val next = PopupCaptureTrace.begin(host, true)
+    check(next != 0L && results.isEmpty()) { "Query outcomes leaked into another sample" }
+    PopupCaptureTrace.end(next, host, true)
+    println("PASS: successful null query, missing class/method, failed invocation and per-sample reset")
 }
 
 fun main() {

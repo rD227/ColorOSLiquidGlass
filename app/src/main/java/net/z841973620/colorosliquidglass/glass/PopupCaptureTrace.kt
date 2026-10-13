@@ -19,6 +19,14 @@ internal object PopupCaptureTrace {
     private var captureThread: Thread? = null
     private var currentStage: Stage? = null
     private val stages = linkedMapOf<String, Totals>()
+    private val outcomes = linkedMapOf<String, Int>()
+
+    /** Only fixed query identifiers and result categories; never log exception messages or content. */
+    @JvmStatic fun outcome(query: String, result: String) {
+        if (!active || Thread.currentThread() !== captureThread) return
+        val key = "$query.$result"
+        outcomes[key] = (outcomes[key] ?: 0) + 1
+    }
 
     internal class Totals(var wall: Long = 0, var cpu: Long = 0, var calls: Int = 0)
 
@@ -69,6 +77,7 @@ internal object PopupCaptureTrace {
         waitNanos = 0L
         readbackNanos = 0L
         stages.clear()
+        outcomes.clear()
         captureThread = Thread.currentThread()
         Log.d(TAG, "begin host=${System.identityHashCode(host)} sample=${count + 1} forced=$forced size=${host.width}x${host.height}")
         captureCpuStart = Debug.threadCpuTimeNanos()
@@ -95,6 +104,7 @@ internal object PopupCaptureTrace {
         }
         val otherWall = total - stages.values.sumOf { it.wall }
         val otherCpu = cpu - stages.values.sumOf { it.cpu }
-        Log.d(TAG, "end host=${System.identityHashCode(host)} totalMs=${total / 1e6} cpuMs=${cpu / 1e6} offCpuMs=${(total - cpu) / 1e6} hwSnaps=$rasterCount gpuWaitMs=${waitNanos / 1e6} readbackMs=${readbackNanos / 1e6} published=$published stages(wallMs/cpuMs/calls): $detail other=${otherWall / 1e6}/${otherCpu / 1e6}")
+        val results = outcomes.entries.joinToString(" ") { (key, count) -> "$key=$count" }
+        Log.d(TAG, "end host=${System.identityHashCode(host)} totalMs=${total / 1e6} cpuMs=${cpu / 1e6} offCpuMs=${(total - cpu) / 1e6} hwSnaps=$rasterCount gpuWaitMs=${waitNanos / 1e6} readbackMs=${readbackNanos / 1e6} published=$published stages(wallMs/cpuMs/calls): $detail other=${otherWall / 1e6}/${otherCpu / 1e6} outcomes: $results")
     }
 }

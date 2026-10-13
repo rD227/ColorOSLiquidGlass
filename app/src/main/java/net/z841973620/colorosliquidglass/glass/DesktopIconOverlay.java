@@ -1446,43 +1446,71 @@ final class DesktopIconOverlay {
     private static View findOpenFolderView(View seed) {
         try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("findOpenFolderView")) {
             try {
-                Object launcher = resolveLauncherAny(seed);
-                if (launcher != null) {
-                    ClassLoader cl = launcher.getClass().getClassLoader();
-                    View fromAfv = invokeOpenFolder(launcher, cl,
-                            "com.android.launcher3.AbstractFloatingView", "getOpenFolder");
-                    if (fromAfv != null) return fromAfv;
-                    for (String cls : new String[] {
-                            "com.android.launcher3.folder.Folder",
-                            "com.android.launcher3.folder.OplusFolder"
-                    }) {
-                        View fromGet = invokeOpenFolder(launcher, cl, cls, "getOpen");
-                        if (fromGet != null) return fromGet;
+                Object launcher;
+                try (PopupCaptureTrace.Stage stage = PopupCaptureTrace.section("folder_launcher")) {
+                    launcher = resolveLauncherAny(seed);
+                }
+                PopupCaptureTrace.outcome("folder_launcher", launcher == null ? "missing" : "found");
+                try (PopupCaptureTrace.Stage stage = PopupCaptureTrace.section("folder_oem")) {
+                    if (launcher != null) {
+                        ClassLoader cl = launcher.getClass().getClassLoader();
+                        View fromAfv = invokeOpenFolder(launcher, cl,
+                                "com.android.launcher3.AbstractFloatingView", "getOpenFolder");
+                        if (fromAfv != null) return fromAfv;
+                        for (String cls : new String[] {
+                                "com.android.launcher3.folder.Folder",
+                                "com.android.launcher3.folder.OplusFolder"
+                        }) {
+                            View fromGet = invokeOpenFolder(launcher, cl, cls, "getOpen");
+                            if (fromGet != null) return fromGet;
+                        }
                     }
                 }
                 View root = seed != null
                         ? (seed.getRootView() != null ? seed.getRootView() : seed) : null;
-                View found = findOpenFolderInTree(root);
+                View found;
+                try (PopupCaptureTrace.Stage stage = PopupCaptureTrace.section("folder_tree")) {
+                    found = findOpenFolderInTree(root);
+                }
+                PopupCaptureTrace.outcome("folder_tree", found == null ? "not_found" : "found");
                 if (found != null) return found;
-                return findOpenFolderViaIcons(seed);
-            } catch (Throwable ignored) { }
+                try (PopupCaptureTrace.Stage stage = PopupCaptureTrace.section("folder_icons")) {
+                    found = findOpenFolderViaIcons(seed);
+                }
+                PopupCaptureTrace.outcome("folder_icons", found == null ? "not_found" : "found");
+                return found;
+            } catch (Throwable ignored) {
+                PopupCaptureTrace.outcome("folder_search", "failed");
+            }
             return null;
         }
     }
 
     private static View invokeOpenFolder(Object launcher, ClassLoader cl, String className,
             String methodName) {
+        String failure = "lookup_failed";
         try {
             Class<?> cls = Class.forName(className, false, cl);
+            boolean matched = false;
             for (java.lang.reflect.Method m : cls.getMethods()) {
                 if (!methodName.equals(m.getName()) || m.getParameterCount() != 1) continue;
+                matched = true;
+                failure = "invoke_failed";
                 Object folder = m.invoke(null, launcher);
+                failure = "validation_failed";
                 if (folder instanceof View && isFolderCurrentlyOpen((View) folder)) {
+                    PopupCaptureTrace.outcome(className, "found");
                     return (View) folder;
                 }
+                PopupCaptureTrace.outcome(className, folder == null ? "returned_null"
+                        : folder instanceof View ? "returned_not_open" : "returned_non_view");
                 break;
             }
-        } catch (Throwable ignored) { }
+            if (!matched) PopupCaptureTrace.outcome(className, "method_missing");
+        } catch (Throwable error) {
+            PopupCaptureTrace.outcome(className, error instanceof ClassNotFoundException
+                    ? "class_missing" : failure);
+        }
         return null;
     }
 

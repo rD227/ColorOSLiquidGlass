@@ -129,3 +129,34 @@ Cos14 软件合成和拖动路径保持原有行为。缓存显式标记 `shared
 
 安装并重启桌面组件后，用相同的大菜单反复打开/关闭约 30 秒，再比较各入口的墙钟和 CPU 时间。
 若某个入口成为主要热点，再针对它细分反射查找或遍历；此版本不预先改动这些行为，以保持测量可比。
+
+
+## 1.3.12：查找打开的文件夹内部阶段与结果
+
+1.3.11 的 131 次实际采样中，`findOpenFolderView` 平均耗时 12.065 ms（CPU 11.978 ms），
+占四个查找入口的 87.33%。本轮继续细分这个入口：
+
+| 字段 | 内容 |
+| --- | --- |
+| folder_launcher | 解析 Launcher 对象 |
+| folder_oem | 尝试系统的打开文件夹查询接口 |
+| folder_tree | 搜索 View 树 |
+| folder_icons | 从桌面文件夹图标关联查找 |
+
+计时仍排除子阶段：这四项与 `findOpenFolderView` 本身的剩余时间相加，才对应上一版该入口的总时间。
+不能只看本版 `findOpenFolderView` 字段变小就认定性能提高。
+
+每条采样末尾新增 `outcomes:` 计数，按本次采样清零：
+- Launcher：`found` / `missing`。
+- OEM 查询按类名记录：`found`、`returned_null`、`returned_not_open`、`returned_non_view`；
+  或 `class_missing`、`method_missing`、`lookup_failed`、`invoke_failed`、`validation_failed`。
+- View 树、图标关联查询：`found` / `not_found`。
+- 外层查询异常：`folder_search.failed`。
+
+`returned_null` 只证明方法被成功调用并返回 null，接口是否权威代表“没有打开的文件夹”仍需核对 OEM 语义。
+`returned_not_open` 表示返回了 View，但未通过现有的文件夹类型、可见性、尺寸或打开状态检查。
+保留原有查询顺序和返回行为，不缓存查询结果，不提前跳过兼容路径。
+只记录固定结果分类，不输出异常消息、桌面内容或截图。
+
+设备测试通过实际反射调用验证：正常返回 null、方法不存在、类不存在、方法抛异常分别落入不同结果，
+并验证下一次采样清空计数。抓真实操作时仍需先安装新版并重启桌面组件，再反复打开、关闭同一个大菜单。
