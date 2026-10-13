@@ -41,6 +41,7 @@ final class DesktopIconOverlay {
     private static final Map<View, WidgetSnap> WIDGET_SNAPS = new WeakHashMap<>();
     /** HW snap of BubbleTextView / ShortcutContainer (icon + 角标 + label). */
     private static final Map<View, AppSnap> APP_SNAPS = new WeakHashMap<>();
+    private static final DesktopIconBitmapCache ICON_BITMAPS = new DesktopIconBitmapCache();
 
     private static final class FolderSnap {
         Bitmap bitmap;
@@ -3526,9 +3527,12 @@ final class DesktopIconOverlay {
     /** Drawing on a hardware canvas needs no CPU readback, including preview fallback paths. */
     private static Bitmap bitmapForCanvas(Bitmap bitmap, Canvas canvas) {
         if (canvas.isHardwareAccelerated()) {
+            PopupCaptureTrace.outcome("icon_bitmap", "hardware_direct");
             return bitmap == null || bitmap.isRecycled() ? null : bitmap;
         }
-        return softwareBitmap(bitmap);
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("bitmap_copy")) {
+            return ICON_BITMAPS.softwareIcon(bitmap);
+        }
     }
 
     /** Fresh, caller-owned conversion for pixel inspection and live drag snapshots. */
