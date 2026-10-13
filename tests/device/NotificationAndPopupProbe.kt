@@ -3,10 +3,87 @@ package net.z841973620.colorosliquidglass.glass
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.os.Looper
 import android.view.View
 import android.widget.FrameLayout
 import net.z841973620.colorosliquidglass.GlassConfig
+
+private class FolderIcon(context: Context) : FrameLayout(context) {
+    @JvmField val mPreviewItemManager = PopupPreview()
+}
+
+private class PopupPreview {
+    var color = Color.RED
+    fun draw(canvas: Canvas) {
+        canvas.drawRect(32f, 32f, 64f, 64f, Paint().apply { color = this@PopupPreview.color })
+    }
+}
+
+private fun checkFolderHardwareComposite(context: Context, root: FrameLayout) {
+    val folder = FolderIcon(context)
+    val plate = View(context)
+    root.addView(folder)
+    folder.addView(plate)
+    folder.layout(0, 0, 128, 128)
+    plate.layout(0, 0, 128, 128)
+    plate.background = GlassDrawable(plate, GlassConfig())
+    val captures = BackdropCapture::class.java.getDeclaredField("CAPTURES").apply { isAccessible = true }.get(null) as Map<*, *>
+    val capture = captures[plate] as BackdropCapture
+    check(capture.usesSharedWallpaper())
+    val composite = DesktopIconOverlay::class.java.getDeclaredMethod(
+        "folderCompositeBitmap", View::class.java, Int::class.javaPrimitiveType,
+        Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType
+    ).apply { isAccessible = true }
+    fun render(): Bitmap = composite.invoke(null, folder, 128, 128, true, true) as Bitmap
+    val first = render()
+    check(Color.red(first.getPixel(48, 48)) > 240) { "Folder preview was not rendered" }
+    for (name in listOf("frontBitmap", "backBitmap")) {
+        check(BackdropCapture::class.java.getDeclaredField(name).apply { isAccessible = true }.get(capture) == null) {
+            "Hardware folder composite unnecessarily materialized a software wallpaper: $name"
+        }
+    }
+    folder.mPreviewItemManager.color = Color.BLUE
+    val second = render()
+    check(second !== first && Color.blue(second.getPixel(48, 48)) > 240) {
+        "Shared wallpaper must not turn null plateSource into a stale folder cache hit"
+    }
+    // Software consumers still explicitly request a local bitmap.
+    BackdropCapture.snapshotOf(plate)
+    val front = BackdropCapture::class.java.getDeclaredField("frontBitmap").apply { isAccessible = true }.get(capture)
+    val back = BackdropCapture::class.java.getDeclaredField("backBitmap").apply { isAccessible = true }.get(capture)
+    check(front != null || back != null) { "Explicit software snapshot no longer materializes a bitmap" }
+    // OEM may remove the live plate during a menu transition; retain the last glass composite.
+    GlassInstaller.uninstall(plate)
+    check(render() === second) { "OEM plate removal discarded retained glass" }
+    DesktopIconOverlay.clearFolderSnaps()
+    root.removeView(folder)
+}
+
+private fun checkCaptureTrace(host: View) {
+    if (!android.util.Log.isLoggable("ColgPopupPerf", android.util.Log.DEBUG)) {
+        check(PopupCaptureTrace.section("disabled") == null)
+        return
+    }
+    val start = PopupCaptureTrace.begin(host, true)
+    check(start != 0L)
+    PopupCaptureTrace.section("test_outer").use {
+        check(PopupCaptureTrace.section("test_outer") == null) { "Recursive search allocated another timer" }
+        PopupCaptureTrace.section("test_inner").use {
+            android.os.SystemClock.sleep(15)
+        }
+    }
+    PopupCaptureTrace.end(start, host, true)
+    val field = PopupCaptureTrace::class.java.getDeclaredField("stages").apply { isAccessible = true }
+    val stages = field.get(null) as Map<*, *>
+    val outer = stages["test_outer"] as PopupCaptureTrace.Totals
+    val inner = stages["test_inner"] as PopupCaptureTrace.Totals
+    check(outer.calls == 1 && inner.calls == 1)
+    check(inner.wall >= 10_000_000L) { "Nested timer lost the measured wait" }
+    check(PopupCaptureTrace.section("finished") == null)
+    println("PASS: opt-in stage timers, nested scopes, recursion collapse and cleanup")
+}
 
 fun main() {
     if (Looper.myLooper() == null) Looper.prepareMainLooper()
@@ -70,5 +147,8 @@ fun main() {
         "GPU popup reused a stale source"
     }
     BackdropCapture.unregister(card)
+    checkCaptureTrace(card)
+    checkFolderHardwareComposite(context, root)
     println("PASS: shared card/header ownership, cleanup, coalesced popup requests, GPU blur, zero radius, live updates, no CPU blur")
+    println("PASS: no unused folder wallpaper bitmap, fresh previews, explicit software snapshots, retained OEM transition glass")
 }

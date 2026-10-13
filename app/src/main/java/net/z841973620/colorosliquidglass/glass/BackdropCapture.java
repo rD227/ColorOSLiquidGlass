@@ -608,7 +608,15 @@ import java.util.WeakHashMap;
         return validFrame && frontBitmap != null && !frontBitmap.isRecycled() ? frontBitmap : null;
     }
 
-    /** Latest useful backdrop for a glass host, if any. */
+    /** Query the rendering route without materializing a software wallpaper snapshot. */
+    static boolean usesSharedWallpaper(View target) {
+        synchronized (CAPTURES) {
+            BackdropCapture capture = CAPTURES.get(target);
+            return capture != null && capture.usesSharedWallpaper();
+        }
+    }
+
+    /** Latest useful backdrop for a glass host, if any. Shared wallpaper is materialized on demand. */
     static Bitmap snapshotOf(View target) {
         if (target == null) return null;
         synchronized (CAPTURES) {

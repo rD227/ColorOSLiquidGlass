@@ -50,6 +50,8 @@ final class DesktopIconOverlay {
         boolean includeName;
         /** Cos14 options-menu: true once AGSL plate was baked with a real backdrop. */
         boolean popupGlassReady;
+        /** HW composite sampled the shared wallpaper; there is no local plateSource bitmap. */
+        boolean sharedLivePlate;
     }
 
     private static final class WidgetSnap {
@@ -3113,9 +3115,13 @@ final class DesktopIconOverlay {
         boolean liveGlass = bgView != null && (GlassInstaller.get(bgView) != null
                 || bgView.getBackground() instanceof GlassDrawable);
         boolean cos14 = ColorOsVersion.detect() == ColorOsVersion.Flavor.LEGACY_13_14;
-        // Use the already-warmed plate frame only. Never forceCapture on Cos16 menu path —
-        // nested capture while sampling options-menu glass corrupts the folder plate (花屏).
-        Bitmap plateSource = bgView == null ? null : BackdropCapture.snapshotOf(bgView);
+        // The Cos16 HW path draws GlassDrawable directly from the shared wallpaper texture.
+        // snapshotOf() would synchronously create an unused local software wallpaper first.
+        // Keep the Cos14 software path and drag paths unchanged.
+        boolean sharedLivePlate = popupSample && !cos14 && liveGlass
+                && BackdropCapture.usesSharedWallpaper(bgView);
+        Bitmap plateSource = bgView == null || sharedLivePlate
+                ? null : BackdropCapture.snapshotOf(bgView);
         FolderSnap cached = FOLDER_SNAPS.get(folderIcon);
         if (cached != null && cached.bitmap != null && !cached.bitmap.isRecycled()
                 && cached.width == width && cached.height == height
@@ -3125,9 +3131,11 @@ final class DesktopIconOverlay {
                 if (cached.popupGlassReady) {
                     return cached.bitmap;
                 }
-            } else if (cached.plateSource == plateSource) {
+            } else if (!sharedLivePlate && !cached.sharedLivePlate
+                    && cached.plateSource == plateSource) {
                 return cached.bitmap;
-            } else if (plateSource == null && cached.plateSource != null && !liveGlass) {
+            } else if (plateSource == null && (cached.plateSource != null || cached.sharedLivePlate)
+                    && !liveGlass) {
                 // Folder options-menu OEM-only strips plate glass (plateSource→null). Keep the
                 // last LiquidGlass composite so float-menu ashmem still shows glass under the menu.
                 return cached.bitmap;
@@ -3180,6 +3188,9 @@ final class DesktopIconOverlay {
         FolderSnap snap = new FolderSnap();
         snap.bitmap = rendered;
         snap.plateSource = plateSource;
+        // A shared source has no local-bitmap identity as a revision key. Keep rendering live
+        // previews/material/coordinates; null == null must never freeze these composites.
+        snap.sharedLivePlate = sharedLivePlate;
         snap.width = width;
         snap.height = height;
         snap.includeName = includeName;
@@ -3271,18 +3282,18 @@ final class DesktopIconOverlay {
         return bitmap;
     }
 
-    /** Any retained LiquidGlass folder snap (prefer exact size, else any plateSource!=null). */
+    /** Any retained LiquidGlass folder snap, including a shared-wallpaper HW composite. */
     private static FolderSnap findRetainedGlassSnap(View folderIcon, int width, int height,
             boolean includeName) {
         FolderSnap exact = FOLDER_SNAPS.get(folderIcon);
         if (exact != null && exact.bitmap != null && !exact.bitmap.isRecycled()
-                && exact.plateSource != null
+                && (exact.plateSource != null || exact.sharedLivePlate)
                 && exact.width == width && exact.height == height
                 && exact.includeName == includeName) {
             return exact;
         }
         if (exact != null && exact.bitmap != null && !exact.bitmap.isRecycled()
-                && exact.plateSource != null) {
+                && (exact.plateSource != null || exact.sharedLivePlate)) {
             return exact;
         }
         return null;
