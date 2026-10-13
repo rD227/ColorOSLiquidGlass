@@ -18,16 +18,18 @@ final class SharedWallpaperBackdrop {
     private SharedWallpaperBackdrop() {}
 
     static Bitmap texture(View target, float radius) {
-        View root = target.getRootView();
-        RootTextures textures = ROOTS.get(root);
-        if (textures == null) {
-            textures = new RootTextures();
-            ROOTS.put(root, textures);
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("shared_wallpaper")) {
+            View root = target.getRootView();
+            RootTextures textures = ROOTS.get(root);
+            if (textures == null) {
+                textures = new RootTextures();
+                ROOTS.put(root, textures);
+            }
+            TextureCache cache = textures.forSource(BackdropCapture.wallpaperSource(target));
+            Drawable wallpaper = BackdropCapture.resolveWallpaperDrawable(target.getContext(), target);
+            if (wallpaper == null) throw new IllegalStateException("Glass wallpaper is unavailable");
+            return cache.get(wallpaper, root.getWidth(), root.getHeight(), radius);
         }
-        TextureCache cache = textures.forSource(BackdropCapture.wallpaperSource(target));
-        Drawable wallpaper = BackdropCapture.resolveWallpaperDrawable(target.getContext(), target);
-        if (wallpaper == null) throw new IllegalStateException("Glass wallpaper is unavailable");
-        return cache.get(wallpaper, root.getWidth(), root.getHeight(), radius);
     }
 
     static void coordinates(View target, float left, float top, float[] values) {

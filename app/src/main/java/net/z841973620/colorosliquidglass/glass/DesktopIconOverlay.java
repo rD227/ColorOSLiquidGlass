@@ -757,23 +757,25 @@ final class DesktopIconOverlay {
 
     /** DragController.mDragObject.originalView — ColorOS may not keep content on DragView. */
     private static void collectDragControllerSources(View seed, java.util.HashSet<View> out) {
-        if (seed == null || out == null) return;
-        try {
-            Object launcher = resolveLauncherAny(seed);
-            Object dragCtrl = invokeNoArgs(launcher, "getDragController");
-            if (dragCtrl == null) dragCtrl = fieldValue(launcher, "mDragController");
-            Object dragObj = fieldValue(dragCtrl, "mDragObject");
-            if (dragObj == null) return;
-            // Only suppress the origin while a DragView is still live. After cancel / drop,
-            // the DragView is gone and the origin must paint again with the desktop.
-            View root = seed.getRootView() != null ? seed.getRootView() : seed;
-            if (!hasLiveDragView(root)) return;
-            for (String name : new String[] {
-                    "originalView", "mOriginalView", "sourceView", "mSourceView"
-            }) {
-                addSkipIcon(out, fieldValue(dragObj, name));
-            }
-        } catch (Throwable ignored) { }
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("traversal")) {
+            if (seed == null || out == null) return;
+            try {
+                Object launcher = resolveLauncherAny(seed);
+                Object dragCtrl = invokeNoArgs(launcher, "getDragController");
+                if (dragCtrl == null) dragCtrl = fieldValue(launcher, "mDragController");
+                Object dragObj = fieldValue(dragCtrl, "mDragObject");
+                if (dragObj == null) return;
+                // Only suppress the origin while a DragView is still live. After cancel / drop,
+                // the DragView is gone and the origin must paint again with the desktop.
+                View root = seed.getRootView() != null ? seed.getRootView() : seed;
+                if (!hasLiveDragView(root)) return;
+                for (String name : new String[] {
+                        "originalView", "mOriginalView", "sourceView", "mSourceView"
+                }) {
+                    addSkipIcon(out, fieldValue(dragObj, name));
+                }
+            } catch (Throwable ignored) { }
+        }
     }
 
     /**
@@ -1440,28 +1442,30 @@ final class DesktopIconOverlay {
     }
 
     private static View findOpenFolderView(View seed) {
-        try {
-            Object launcher = resolveLauncherAny(seed);
-            if (launcher != null) {
-                ClassLoader cl = launcher.getClass().getClassLoader();
-                View fromAfv = invokeOpenFolder(launcher, cl,
-                        "com.android.launcher3.AbstractFloatingView", "getOpenFolder");
-                if (fromAfv != null) return fromAfv;
-                for (String cls : new String[] {
-                        "com.android.launcher3.folder.Folder",
-                        "com.android.launcher3.folder.OplusFolder"
-                }) {
-                    View fromGet = invokeOpenFolder(launcher, cl, cls, "getOpen");
-                    if (fromGet != null) return fromGet;
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("traversal")) {
+            try {
+                Object launcher = resolveLauncherAny(seed);
+                if (launcher != null) {
+                    ClassLoader cl = launcher.getClass().getClassLoader();
+                    View fromAfv = invokeOpenFolder(launcher, cl,
+                            "com.android.launcher3.AbstractFloatingView", "getOpenFolder");
+                    if (fromAfv != null) return fromAfv;
+                    for (String cls : new String[] {
+                            "com.android.launcher3.folder.Folder",
+                            "com.android.launcher3.folder.OplusFolder"
+                    }) {
+                        View fromGet = invokeOpenFolder(launcher, cl, cls, "getOpen");
+                        if (fromGet != null) return fromGet;
+                    }
                 }
-            }
-            View root = seed != null
-                    ? (seed.getRootView() != null ? seed.getRootView() : seed) : null;
-            View found = findOpenFolderInTree(root);
-            if (found != null) return found;
-            return findOpenFolderViaIcons(seed);
-        } catch (Throwable ignored) { }
-        return null;
+                View root = seed != null
+                        ? (seed.getRootView() != null ? seed.getRootView() : seed) : null;
+                View found = findOpenFolderInTree(root);
+                if (found != null) return found;
+                return findOpenFolderViaIcons(seed);
+            } catch (Throwable ignored) { }
+            return null;
+        }
     }
 
     private static View invokeOpenFolder(Object launcher, ClassLoader cl, String className,
@@ -1717,20 +1721,22 @@ final class DesktopIconOverlay {
      * painting the origin would wrongly place the icon at the home cell.
      */
     private static void collectDragSources(View root, java.util.HashSet<View> out) {
-        if (root == null || out == null) return;
-        if (isDragView(root) && root.getVisibility() != View.GONE
-                && root.getWidth() > 0 && root.getHeight() > 0) {
-            addSkipIcon(out, dragOriginView(root));
-            View content = dragContentView(root);
-            // Content still on the workspace (not re-parented) — skip to avoid ghost.
-            if (content != null && !isDescendant(content, root)) {
-                addSkipIcon(out, content);
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("traversal")) {
+            if (root == null || out == null) return;
+            if (isDragView(root) && root.getVisibility() != View.GONE
+                    && root.getWidth() > 0 && root.getHeight() > 0) {
+                addSkipIcon(out, dragOriginView(root));
+                View content = dragContentView(root);
+                // Content still on the workspace (not re-parented) — skip to avoid ghost.
+                if (content != null && !isDescendant(content, root)) {
+                    addSkipIcon(out, content);
+                }
             }
-        }
-        if (root instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) root;
-            for (int i = 0; i < g.getChildCount(); i++) {
-                collectDragSources(g.getChildAt(i), out);
+            if (root instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) root;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    collectDragSources(g.getChildAt(i), out);
+                }
             }
         }
     }
@@ -2628,75 +2634,77 @@ final class DesktopIconOverlay {
      */
     private static boolean paintAppMenuComposite(View cellChild, View iconHost,
             Canvas canvas, Matrix globalToTarget) {
-        // Prefer CellLayout child (ShortcutContainer) so sibling/overlay badges are included.
-        View target = cellChild != null && cellChild.getWidth() > 0 && cellChild.getHeight() > 0
-                ? cellChild : iconHost;
-        if (target == null) return false;
-        if (DEPTH.get() > 0) return false;
-        int w = target.getWidth();
-        int h = target.getHeight();
-        if (w <= 0 || h <= 0) return false;
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("app_composite")) {
+            // Prefer CellLayout child (ShortcutContainer) so sibling/overlay badges are included.
+            View target = cellChild != null && cellChild.getWidth() > 0 && cellChild.getHeight() > 0
+                    ? cellChild : iconHost;
+            if (target == null) return false;
+            if (DEPTH.get() > 0) return false;
+            int w = target.getWidth();
+            int h = target.getHeight();
+            if (w <= 0 || h <= 0) return false;
 
-        boolean cos14Software = ColorOsVersion.detect() == ColorOsVersion.Flavor.LEGACY_13_14;
-        AppSnap cached = APP_SNAPS.get(target);
-        Bitmap rendered = null;
-        if (cached != null && cached.bitmap != null && !cached.bitmap.isRecycled()
-                && cached.width == w && cached.height == h) {
-            rendered = cached.bitmap;
-        } else if (cos14Software) {
-            // Cos14: HW raster of BubbleTextView/ShortcutContainer glitches under menu glass.
-            rendered = rasterizeViewSoftware(target, w, h);
-            if (rendered == null || rendered.isRecycled()) {
-                if (iconHost != null && iconHost != target
-                        && iconHost.getWidth() > 0 && iconHost.getHeight() > 0) {
-                    return paintAppMenuComposite(iconHost, iconHost, canvas, globalToTarget);
-                }
-                return false;
-            }
-            AppSnap snap = new AppSnap();
-            snap.bitmap = rendered;
-            snap.width = w;
-            snap.height = h;
-            AppSnap previous = APP_SNAPS.put(target, snap);
-            if (previous != null && previous.bitmap != null && previous.bitmap != rendered
-                    && !previous.bitmap.isRecycled()) {
-                previous.bitmap.recycle();
-            }
-        } else {
-            rendered = GlassHwRasterizer.render(w, h, hwCanvas -> {
-                DEPTH.set(DEPTH.get() + 1);
-                try {
-                    target.draw(hwCanvas);
-                } finally {
-                    DEPTH.set(Math.max(0, DEPTH.get() - 1));
-                }
-            });
-            if (rendered == null || rendered.isRecycled()) {
-                // Retry on BubbleTextView alone if the wrapper HW snap failed.
-                if (iconHost != null && iconHost != target
-                        && iconHost.getWidth() > 0 && iconHost.getHeight() > 0) {
-                    return paintAppMenuComposite(iconHost, iconHost, canvas, globalToTarget);
-                }
-                // Folder BubbleTextView HW snap can fail; software still includes 角标
-                // (same Cos14 path) — never fall through to FastBitmap-only.
+            boolean cos14Software = ColorOsVersion.detect() == ColorOsVersion.Flavor.LEGACY_13_14;
+            AppSnap cached = APP_SNAPS.get(target);
+            Bitmap rendered = null;
+            if (cached != null && cached.bitmap != null && !cached.bitmap.isRecycled()
+                    && cached.width == w && cached.height == h) {
+                rendered = cached.bitmap;
+            } else if (cos14Software) {
+                // Cos14: HW raster of BubbleTextView/ShortcutContainer glitches under menu glass.
                 rendered = rasterizeViewSoftware(target, w, h);
-                if (rendered == null || rendered.isRecycled()) return false;
+                if (rendered == null || rendered.isRecycled()) {
+                    if (iconHost != null && iconHost != target
+                            && iconHost.getWidth() > 0 && iconHost.getHeight() > 0) {
+                        return paintAppMenuComposite(iconHost, iconHost, canvas, globalToTarget);
+                    }
+                    return false;
+                }
+                AppSnap snap = new AppSnap();
+                snap.bitmap = rendered;
+                snap.width = w;
+                snap.height = h;
+                AppSnap previous = APP_SNAPS.put(target, snap);
+                if (previous != null && previous.bitmap != null && previous.bitmap != rendered
+                        && !previous.bitmap.isRecycled()) {
+                    previous.bitmap.recycle();
+                }
+            } else {
+                rendered = GlassHwRasterizer.render(w, h, hwCanvas -> {
+                    DEPTH.set(DEPTH.get() + 1);
+                    try {
+                        target.draw(hwCanvas);
+                    } finally {
+                        DEPTH.set(Math.max(0, DEPTH.get() - 1));
+                    }
+                });
+                if (rendered == null || rendered.isRecycled()) {
+                    // Retry on BubbleTextView alone if the wrapper HW snap failed.
+                    if (iconHost != null && iconHost != target
+                            && iconHost.getWidth() > 0 && iconHost.getHeight() > 0) {
+                        return paintAppMenuComposite(iconHost, iconHost, canvas, globalToTarget);
+                    }
+                    // Folder BubbleTextView HW snap can fail; software still includes 角标
+                    // (same Cos14 path) — never fall through to FastBitmap-only.
+                    rendered = rasterizeViewSoftware(target, w, h);
+                    if (rendered == null || rendered.isRecycled()) return false;
+                }
+                AppSnap snap = new AppSnap();
+                snap.bitmap = rendered;
+                snap.width = w;
+                snap.height = h;
+                AppSnap previous = APP_SNAPS.put(target, snap);
+                if (previous != null && previous.bitmap != null && previous.bitmap != rendered
+                        && !previous.bitmap.isRecycled()) {
+                    previous.bitmap.recycle();
+                }
             }
-            AppSnap snap = new AppSnap();
-            snap.bitmap = rendered;
-            snap.width = w;
-            snap.height = h;
-            AppSnap previous = APP_SNAPS.put(target, snap);
-            if (previous != null && previous.bitmap != null && previous.bitmap != rendered
-                    && !previous.bitmap.isRecycled()) {
-                previous.bitmap.recycle();
-            }
+            RectF dest = mapItemRectToTarget(target, new Rect(0, 0, w, h), globalToTarget);
+            if (dest == null || dest.width() < 1f || dest.height() < 1f) return false;
+            BITMAP_PAINT.setAlpha(255);
+            canvas.drawBitmap(rendered, null, dest, BITMAP_PAINT);
+            return true;
         }
-        RectF dest = mapItemRectToTarget(target, new Rect(0, 0, w, h), globalToTarget);
-        if (dest == null || dest.width() < 1f || dest.height() < 1f) return false;
-        BITMAP_PAINT.setAlpha(255);
-        canvas.drawBitmap(rendered, null, dest, BITMAP_PAINT);
-        return true;
     }
 
     /**
@@ -2707,54 +2715,56 @@ final class DesktopIconOverlay {
      * remain — otherwise float-menu glass bakes an opaque indicator plate.
      */
     private static void paintDesktopChrome(View host, Canvas canvas, Matrix globalToTarget) {
-        if (host == null) return;
-        int w = host.getWidth();
-        int h = host.getHeight();
-        if (w <= 0 || h <= 0) return;
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("desktop_chrome")) {
+            if (host == null) return;
+            int w = host.getWidth();
+            int h = host.getHeight();
+            if (w <= 0 || h <= 0) return;
 
-        View blurBg = null;
-        float prevBlurAlpha = 1f;
-        int prevBlurVis = View.VISIBLE;
-        Object prevBgAlpha = fieldValue(host, "mBgAlpha");
-        Object blurObj = fieldValue(host, "mBlurBgView");
-        if (blurObj instanceof View) {
-            blurBg = (View) blurObj;
-            prevBlurAlpha = blurBg.getAlpha();
-            prevBlurVis = blurBg.getVisibility();
-        }
+            View blurBg = null;
+            float prevBlurAlpha = 1f;
+            int prevBlurVis = View.VISIBLE;
+            Object prevBgAlpha = fieldValue(host, "mBgAlpha");
+            Object blurObj = fieldValue(host, "mBlurBgView");
+            if (blurObj instanceof View) {
+                blurBg = (View) blurObj;
+                prevBlurAlpha = blurBg.getAlpha();
+                prevBlurVis = blurBg.getVisibility();
+            }
 
-        Bitmap rendered = null;
-        GlassInstaller.beginPageIndicatorDotSample();
-        try {
-            if (blurBg != null) {
-                blurBg.setAlpha(0f);
-                blurBg.setVisibility(View.INVISIBLE);
+            Bitmap rendered = null;
+            GlassInstaller.beginPageIndicatorDotSample();
+            try {
+                if (blurBg != null) {
+                    blurBg.setAlpha(0f);
+                    blurBg.setVisibility(View.INVISIBLE);
+                }
+                if (prevBgAlpha instanceof Number) {
+                    assignField(host, "mBgAlpha", 0);
+                }
+                // Software only: HW path can still bake GlassDrawable into an opaque plate.
+                rendered = rasterizeViewSoftware(host, w, h);
+            } finally {
+                if (prevBgAlpha instanceof Number) {
+                    assignField(host, "mBgAlpha", prevBgAlpha);
+                }
+                if (blurBg != null) {
+                    try { blurBg.setAlpha(prevBlurAlpha); } catch (Throwable ignored) { }
+                    try { blurBg.setVisibility(prevBlurVis); } catch (Throwable ignored) { }
+                }
+                GlassInstaller.endPageIndicatorDotSample();
             }
-            if (prevBgAlpha instanceof Number) {
-                assignField(host, "mBgAlpha", 0);
+            if (rendered == null || rendered.isRecycled()) return;
+            try {
+                RectF dest = mapItemRectToTarget(host,
+                        new Rect(0, 0, rendered.getWidth(), rendered.getHeight()), globalToTarget);
+                if (dest == null || dest.width() < 1f || dest.height() < 1f) return;
+                int alpha = Math.round(255f * Math.max(0f, Math.min(1f, host.getAlpha())));
+                BITMAP_PAINT.setAlpha(alpha);
+                canvas.drawBitmap(rendered, null, dest, BITMAP_PAINT);
+            } finally {
+                if (!rendered.isRecycled()) rendered.recycle();
             }
-            // Software only: HW path can still bake GlassDrawable into an opaque plate.
-            rendered = rasterizeViewSoftware(host, w, h);
-        } finally {
-            if (prevBgAlpha instanceof Number) {
-                assignField(host, "mBgAlpha", prevBgAlpha);
-            }
-            if (blurBg != null) {
-                try { blurBg.setAlpha(prevBlurAlpha); } catch (Throwable ignored) { }
-                try { blurBg.setVisibility(prevBlurVis); } catch (Throwable ignored) { }
-            }
-            GlassInstaller.endPageIndicatorDotSample();
-        }
-        if (rendered == null || rendered.isRecycled()) return;
-        try {
-            RectF dest = mapItemRectToTarget(host,
-                    new Rect(0, 0, rendered.getWidth(), rendered.getHeight()), globalToTarget);
-            if (dest == null || dest.width() < 1f || dest.height() < 1f) return;
-            int alpha = Math.round(255f * Math.max(0f, Math.min(1f, host.getAlpha())));
-            BITMAP_PAINT.setAlpha(alpha);
-            canvas.drawBitmap(rendered, null, dest, BITMAP_PAINT);
-        } finally {
-            if (!rendered.isRecycled()) rendered.recycle();
         }
     }
 
@@ -2784,25 +2794,27 @@ final class DesktopIconOverlay {
      * never hide DragView / PixelCopy the window.
      */
     private static void paintWidget(View host, Canvas canvas, Matrix globalToTarget) {
-        if (host == null) return;
-        View content = widgetContentView(host);
-        int w = content.getWidth();
-        int h = content.getHeight();
-        if (w <= 0 || h <= 0) {
-            content = host;
-            w = host.getWidth();
-            h = host.getHeight();
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("widget_composite")) {
+            if (host == null) return;
+            View content = widgetContentView(host);
+            int w = content.getWidth();
+            int h = content.getHeight();
+            if (w <= 0 || h <= 0) {
+                content = host;
+                w = host.getWidth();
+                h = host.getHeight();
+            }
+            if (w <= 0 || h <= 0) return;
+            Bitmap snap = widgetCompositeBitmap(host, content, w, h);
+            if (snap == null || snap.isRecycled()) return;
+            View mapped = (snap.getWidth() == host.getWidth() && snap.getHeight() == host.getHeight())
+                    ? host : content;
+            RectF dest = mapItemRectToTarget(mapped,
+                    new Rect(0, 0, snap.getWidth(), snap.getHeight()), globalToTarget);
+            if (dest == null || dest.width() < 1f || dest.height() < 1f) return;
+            BITMAP_PAINT.setAlpha(255);
+            canvas.drawBitmap(snap, null, dest, BITMAP_PAINT);
         }
-        if (w <= 0 || h <= 0) return;
-        Bitmap snap = widgetCompositeBitmap(host, content, w, h);
-        if (snap == null || snap.isRecycled()) return;
-        View mapped = (snap.getWidth() == host.getWidth() && snap.getHeight() == host.getHeight())
-                ? host : content;
-        RectF dest = mapItemRectToTarget(mapped,
-                new Rect(0, 0, snap.getWidth(), snap.getHeight()), globalToTarget);
-        if (dest == null || dest.width() < 1f || dest.height() < 1f) return;
-        BITMAP_PAINT.setAlpha(255);
-        canvas.drawBitmap(snap, null, dest, BITMAP_PAINT);
     }
 
     private static Bitmap widgetCompositeBitmap(View host, View content, int width, int height) {
@@ -2891,15 +2903,20 @@ final class DesktopIconOverlay {
     }
 
     private static Bitmap rasterizeViewSoftware(View view, int width, int height) {
-        if (view == null || width <= 0 || height <= 0) return null;
-        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        try {
-            view.draw(new Canvas(bitmap));
-        } catch (Throwable ignored) {
-            bitmap.recycle();
-            return null;
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("software_draw")) {
+            if (view == null || width <= 0 || height <= 0) return null;
+            Bitmap bitmap;
+            try (PopupCaptureTrace.Stage allocationTrace = PopupCaptureTrace.section("bitmap_alloc")) {
+                bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            }
+            try {
+                view.draw(new Canvas(bitmap));
+            } catch (Throwable ignored) {
+                bitmap.recycle();
+                return null;
+            }
+            return bitmap;
         }
-        return bitmap;
     }
 
     private static View widgetContentView(View host) {
@@ -3177,30 +3194,32 @@ final class DesktopIconOverlay {
 
     private static Bitmap hwFolderComposite(View folderIcon, View plateHost, int drawW, int drawH,
             boolean drawName) {
-        return GlassHwRasterizer.render(drawW, drawH, hwCanvas -> {
-            DEPTH.set(DEPTH.get() + 1);
-            try {
-                int dx = 0;
-                int dy = 0;
-                if (!drawName && plateHost != null) {
-                    dx = -plateHost.getLeft();
-                    dy = -plateHost.getTop();
-                }
-                int save = hwCanvas.save();
-                hwCanvas.translate(dx, dy);
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("folder_composite")) {
+            return GlassHwRasterizer.render(drawW, drawH, hwCanvas -> {
+                DEPTH.set(DEPTH.get() + 1);
                 try {
-                    drawFolderPlate(folderIcon, hwCanvas);
-                    paintFolderPreviewBitmaps(folderIcon, hwCanvas);
-                    if (drawName) {
-                        paintFolderName(folderIcon, hwCanvas);
+                    int dx = 0;
+                    int dy = 0;
+                    if (!drawName && plateHost != null) {
+                        dx = -plateHost.getLeft();
+                        dy = -plateHost.getTop();
+                    }
+                    int save = hwCanvas.save();
+                    hwCanvas.translate(dx, dy);
+                    try {
+                        drawFolderPlate(folderIcon, hwCanvas);
+                        paintFolderPreviewBitmaps(folderIcon, hwCanvas);
+                        if (drawName) {
+                            paintFolderName(folderIcon, hwCanvas);
+                        }
+                    } finally {
+                        hwCanvas.restoreToCount(save);
                     }
                 } finally {
-                    hwCanvas.restoreToCount(save);
+                    DEPTH.set(Math.max(0, DEPTH.get() - 1));
                 }
-            } finally {
-                DEPTH.set(Math.max(0, DEPTH.get() - 1));
-            }
-        });
+            });
+        }
     }
 
     /**
@@ -3210,7 +3229,10 @@ final class DesktopIconOverlay {
      */
     private static Bitmap softFolderComposite(View folderIcon, View bgView, Bitmap plateSource,
             int width, int height, boolean includeName) {
-        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Bitmap bitmap;
+        try (PopupCaptureTrace.Stage allocationTrace = PopupCaptureTrace.section("bitmap_alloc")) {
+            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        }
         Canvas canvas = new Canvas(bitmap);
         int dx = 0;
         int dy = 0;
@@ -3457,36 +3479,43 @@ final class DesktopIconOverlay {
     }
 
     private static Bitmap softwareBitmap(Bitmap bitmap) {
-        if (bitmap == null || bitmap.isRecycled()) return null;
-        if (Build.VERSION.SDK_INT >= 26 && bitmap.getConfig() == Bitmap.Config.HARDWARE) {
-            try {
-                Bitmap copy = bitmap.copy(Bitmap.Config.ARGB_8888, false);
-                return copy == null || copy.isRecycled() ? null : copy;
-            } catch (Throwable ignored) {
-                return null;
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("bitmap_copy")) {
+            if (bitmap == null || bitmap.isRecycled()) return null;
+            if (Build.VERSION.SDK_INT >= 26 && bitmap.getConfig() == Bitmap.Config.HARDWARE) {
+                try {
+                    Bitmap copy = bitmap.copy(Bitmap.Config.ARGB_8888, false);
+                    return copy == null || copy.isRecycled() ? null : copy;
+                } catch (Throwable ignored) {
+                    return null;
+                }
             }
+            return bitmap;
         }
-        return bitmap;
     }
 
     private static Bitmap rasterizeDrawable(Drawable drawable, int width, int height) {
-        if (drawable == null || width <= 0 || height <= 0) return null;
-        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(bitmap);
-        Rect old = new Rect(drawable.getBounds());
-        int previous = drawable.getAlpha();
-        drawable.setAlpha(255);
-        drawable.setBounds(0, 0, width, height);
-        try {
-            drawable.draw(canvas);
-        } catch (Throwable ignored) {
-            bitmap.recycle();
-            return null;
-        } finally {
-            drawable.setAlpha(previous);
-            drawable.setBounds(old);
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("software_draw")) {
+            if (drawable == null || width <= 0 || height <= 0) return null;
+            Bitmap bitmap;
+            try (PopupCaptureTrace.Stage allocationTrace = PopupCaptureTrace.section("bitmap_alloc")) {
+                bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            }
+            Canvas canvas = new Canvas(bitmap);
+            Rect old = new Rect(drawable.getBounds());
+            int previous = drawable.getAlpha();
+            drawable.setAlpha(255);
+            drawable.setBounds(0, 0, width, height);
+            try {
+                drawable.draw(canvas);
+            } catch (Throwable ignored) {
+                bitmap.recycle();
+                return null;
+            } finally {
+                drawable.setAlpha(previous);
+                drawable.setBounds(old);
+            }
+            return bitmap;
         }
-        return bitmap;
     }
 
     private static float floatField(Object object, String name) {
@@ -3534,30 +3563,32 @@ final class DesktopIconOverlay {
     }
 
     private static List<ViewGroup> iconContainersUnderRegion(View seed, RectF region) {
-        List<ViewGroup> out = new ArrayList<>();
-        if (region == null) return out;
-        ViewGroup primary = shortcutsAndWidgetsOf(seed);
-        if (primary != null) out.add(primary);
-        View workspace = findWorkspaceAncestor(seed);
-        if (workspace instanceof ViewGroup) {
-            ViewGroup pages = (ViewGroup) workspace;
-            for (int i = 0; i < pages.getChildCount(); i++) {
-                View page = pages.getChildAt(i);
-                if (page == null || page.getWidth() <= 0 || page.getHeight() <= 0) continue;
-                if (!intersectsRegion(region, page)) continue;
-                ViewGroup icons = shortcutsAndWidgetsOf(page);
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("traversal")) {
+            List<ViewGroup> out = new ArrayList<>();
+            if (region == null) return out;
+            ViewGroup primary = shortcutsAndWidgetsOf(seed);
+            if (primary != null) out.add(primary);
+            View workspace = findWorkspaceAncestor(seed);
+            if (workspace instanceof ViewGroup) {
+                ViewGroup pages = (ViewGroup) workspace;
+                for (int i = 0; i < pages.getChildCount(); i++) {
+                    View page = pages.getChildAt(i);
+                    if (page == null || page.getWidth() <= 0 || page.getHeight() <= 0) continue;
+                    if (!intersectsRegion(region, page)) continue;
+                    ViewGroup icons = shortcutsAndWidgetsOf(page);
+                    if (icons != null && !out.contains(icons)) out.add(icons);
+                }
+            }
+            // Hotseat is a CellLayout sibling of Workspace (not a Workspace page). Same paint
+            // path as desktop icons/folders — include when the glass overlaps the dock.
+            View hotseat = findHotseat(seed, workspace);
+            if (hotseat != null && hotseat.getWidth() > 0 && hotseat.getHeight() > 0
+                    && intersectsRegion(region, hotseat)) {
+                ViewGroup icons = shortcutsAndWidgetsOf(hotseat);
                 if (icons != null && !out.contains(icons)) out.add(icons);
             }
+            return out;
         }
-        // Hotseat is a CellLayout sibling of Workspace (not a Workspace page). Same paint
-        // path as desktop icons/folders — include when the glass overlaps the dock.
-        View hotseat = findHotseat(seed, workspace);
-        if (hotseat != null && hotseat.getWidth() > 0 && hotseat.getHeight() > 0
-                && intersectsRegion(region, hotseat)) {
-            ViewGroup icons = shortcutsAndWidgetsOf(hotseat);
-            if (icons != null && !out.contains(icons)) out.add(icons);
-        }
-        return out;
     }
 
     /**

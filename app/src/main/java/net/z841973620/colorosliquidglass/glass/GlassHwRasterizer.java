@@ -23,62 +23,68 @@ final class GlassHwRasterizer {
     private GlassHwRasterizer() {}
 
     static Bitmap render(int width, int height, Consumer<Canvas> drawer) {
-        if (width <= 0 || height <= 0 || drawer == null) return null;
-        ImageReader reader = null;
-        HardwareRenderer renderer = null;
-        try {
-            reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 1,
-                    HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE
-                            | HardwareBuffer.USAGE_GPU_COLOR_OUTPUT
-                            | HardwareBuffer.USAGE_CPU_READ_OFTEN);
-            renderer = new HardwareRenderer();
-            RenderNode node = new RenderNode("ColorOSLiquidGlassSnap");
-            node.setPosition(0, 0, width, height);
-            RecordingCanvas recording = node.beginRecording(width, height);
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("hw_setup_record_cleanup")) {
+            if (width <= 0 || height <= 0 || drawer == null) return null;
+            ImageReader reader = null;
+            HardwareRenderer renderer = null;
             try {
-                drawer.accept(recording);
-            } finally {
-                node.endRecording();
-            }
-            renderer.setContentRoot(node);
-            renderer.setSurface(reader.getSurface());
-            long waitStart = PopupCaptureTrace.stamp();
-            int sync = renderer.createRenderRequest()
-                    .setWaitForPresent(true)
-                    .syncAndDraw();
-            PopupCaptureTrace.gpuWait(waitStart);
-            if (sync != HardwareRenderer.SYNC_OK
-                    && sync != HardwareRenderer.SYNC_REDRAW_REQUESTED) {
+                reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 1,
+                        HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE
+                                | HardwareBuffer.USAGE_GPU_COLOR_OUTPUT
+                                | HardwareBuffer.USAGE_CPU_READ_OFTEN);
+                renderer = new HardwareRenderer();
+                RenderNode node = new RenderNode("ColorOSLiquidGlassSnap");
+                node.setPosition(0, 0, width, height);
+                RecordingCanvas recording = node.beginRecording(width, height);
+                try {
+                    drawer.accept(recording);
+                } finally {
+                    node.endRecording();
+                }
+                renderer.setContentRoot(node);
+                renderer.setSurface(reader.getSurface());
+                long waitStart = PopupCaptureTrace.stamp();
+                int sync;
+                try (PopupCaptureTrace.Stage waitTrace = PopupCaptureTrace.section("gpu_wait")) {
+                    sync = renderer.createRenderRequest().setWaitForPresent(true).syncAndDraw();
+                }
+                PopupCaptureTrace.gpuWait(waitStart);
+                if (sync != HardwareRenderer.SYNC_OK
+                        && sync != HardwareRenderer.SYNC_REDRAW_REQUESTED) {
+                    return null;
+                }
+                Image image = reader.acquireLatestImage();
+                if (image == null) return null;
+                try {
+                    HardwareBuffer buffer = image.getHardwareBuffer();
+                    if (buffer == null) return null;
+                    Bitmap hardware = Bitmap.wrapHardwareBuffer(buffer,
+                            ColorSpace.get(ColorSpace.Named.SRGB));
+                    if (hardware == null || hardware.isRecycled()) return null;
+                    long readbackStart = PopupCaptureTrace.stamp();
+                    Bitmap software;
+                    try (PopupCaptureTrace.Stage copyTrace = PopupCaptureTrace.section("gpu_readback")) {
+                        software = hardware.copy(Bitmap.Config.ARGB_8888, false);
+                    }
+                    PopupCaptureTrace.readback(readbackStart);
+                    if (hardware != software) hardware.recycle();
+                    return software == null || software.isRecycled() ? null : software;
+                } finally {
+                    image.close();
+                }
+            } catch (Throwable ignored) {
                 return null;
-            }
-            Image image = reader.acquireLatestImage();
-            if (image == null) return null;
-            try {
-                HardwareBuffer buffer = image.getHardwareBuffer();
-                if (buffer == null) return null;
-                Bitmap hardware = Bitmap.wrapHardwareBuffer(buffer,
-                        ColorSpace.get(ColorSpace.Named.SRGB));
-                if (hardware == null || hardware.isRecycled()) return null;
-                long readbackStart = PopupCaptureTrace.stamp();
-                Bitmap software = hardware.copy(Bitmap.Config.ARGB_8888, false);
-                PopupCaptureTrace.readback(readbackStart);
-                if (hardware != software) hardware.recycle();
-                return software == null || software.isRecycled() ? null : software;
             } finally {
-                image.close();
-            }
-        } catch (Throwable ignored) {
-            return null;
-        } finally {
-            if (renderer != null) {
-                try {
-                    renderer.destroy();
-                } catch (Throwable ignored) { }
-            }
-            if (reader != null) {
-                try {
-                    reader.close();
-                } catch (Throwable ignored) { }
+                if (renderer != null) {
+                    try {
+                        renderer.destroy();
+                    } catch (Throwable ignored) { }
+                }
+                if (reader != null) {
+                    try {
+                        reader.close();
+                    } catch (Throwable ignored) { }
+                }
             }
         }
     }

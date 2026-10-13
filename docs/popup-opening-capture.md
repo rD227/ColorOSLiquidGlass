@@ -45,3 +45,41 @@ adb shell setprop log.tag.ColgPopupPerf INFO
 `gpuWaitMs` 与 `readbackMs` 是 `totalMs` 的子集，不能再次相加。
 120 Hz 的单帧预算约 8.33 ms；这些日志只度量模块相关阶段，不代表完整帧耗时。
 如果模块阶段很短而实际仍卡，需要进一步用系统帧时间/Perfetto 检查 OEM 动画与渲染线程。
+
+
+## 分阶段诊断（2026-10-13）
+
+上一轮真实长按操作采集到 175 次采样：中位数约 40 ms，最大 99.44 ms；
+没有图标硬件快照的 21 次采样中位数仍约 24.29 ms。
+这证明背景合成阻塞主线程，但不能仅凭总耗时认定 GPU 或线程调度是唯一原因。
+
+新增 `cpuMs`（当前线程 CPU 时间）与 `offCpuMs`（总墙钟时间减 CPU 时间）。
+后者包含等待、阻塞和被调度出去的时间，不能直接称为调度延迟；要进一步区分需要 Perfetto 的调度轨迹。
+
+`stages(wallMs/cpuMs/calls)` 中，每个阶段依次记录墙钟毫秒、CPU 毫秒、调用次数：
+
+| 字段 | 测量内容 |
+| --- | --- |
+| traversal | 桌面图标容器、打开的文件夹、拖动来源查找；包含这些入口内的反射 |
+| wallpaper_lookup | 获取壁纸 Drawable |
+| wallpaper | 软件 Canvas 上的壁纸绘制、坐标与边界调整 |
+| shared_wallpaper | 文件夹共享 GPU 壁纸获取、缓存未命中时的生成 |
+| app_composite / folder_composite / widget_composite | 对应桌面元素的合成 |
+| desktop_chrome | 桌面附属元素（例如页面指示器）的绘制 |
+| software_draw | View / Drawable 软件快照 |
+| bitmap_alloc | 本地采样及软件快照的显式 createBitmap（包括初始化像素） |
+| bitmap_copy | 图标硬件位图转软件位图 |
+| hw_setup_record_cleanup | 离屏渲染器建立、命令录制、清理 |
+| gpu_wait | 图标离屏渲染 syncAndDraw |
+| gpu_readback | 硬件快照复制到软件位图（含复制所需分配） |
+| other | 未细分工作和计时开销 |
+
+这些阶段使用**排除子阶段后的时间**，避免重复计算。例如文件夹合成中的 GPU 等待只算入
+`gpu_wait`，不会再次计入 `folder_composite`。递归层级查找按一次外层操作统计。
+旧字段 `gpuWaitMs` / `readbackMs` 为兼容保留，与阶段明细重叠，不要再相加。
+未记录的系统内部分配、其他线程或驱动内部工作无法靠这些计时直接拆开。
+
+仍然默认关闭，开启方式不变，每个菜单宿主最多 12 次。关闭时不创建阶段对象；
+开启时只在本次主线程采样中汇总，最后统一打印，不在遍历每个 View 时输出日志。
+记录时间的精度与测量开销会带来小误差，应比较多次、相同菜单大小、相同桌面内容的分布。
+诊断提交只加计时，后续修复单独提交，方便按相同流程比较。

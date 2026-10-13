@@ -1,5 +1,6 @@
 package net.z841973620.colorosliquidglass.glass
 
+import android.os.Debug
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
@@ -14,6 +15,42 @@ internal object PopupCaptureTrace {
     private var rasterCount = 0
     private var waitNanos = 0L
     private var readbackNanos = 0L
+    private var captureCpuStart = 0L
+    private var captureThread: Thread? = null
+    private var currentStage: Stage? = null
+    private val stages = linkedMapOf<String, Totals>()
+
+    internal class Totals(var wall: Long = 0, var cpu: Long = 0, var calls: Int = 0)
+
+    /** Exclusive times: nested work is charged to the child, never counted twice. */
+    internal class Stage(val name: String, private val totals: Totals, private val parent: Stage?) : AutoCloseable {
+        private val cpuStart = Debug.threadCpuTimeNanos()
+        private val wallStart = SystemClock.elapsedRealtimeNanos()
+        private var childrenWall = 0L
+        private var childrenCpu = 0L
+
+        override fun close() {
+            val wall = SystemClock.elapsedRealtimeNanos() - wallStart
+            val cpu = Debug.threadCpuTimeNanos() - cpuStart
+            totals.wall += wall - childrenWall
+            totals.cpu += cpu - childrenCpu
+            totals.calls++
+            parent?.let {
+                it.childrenWall += wall
+                it.childrenCpu += cpu
+            }
+            currentStage = parent
+        }
+    }
+
+    @JvmStatic fun section(name: String): Stage? {
+        if (!active || Thread.currentThread() !== captureThread) return null
+        // Recursive tree searches are one operation, not one allocation per visited View.
+        if (currentStage?.name == name) return null
+        val stage = Stage(name, stages.getOrPut(name) { Totals() }, currentStage)
+        currentStage = stage
+        return stage
+    }
 
     @JvmStatic fun installStart(): Long =
         if (Log.isLoggable(TAG, Log.DEBUG)) SystemClock.elapsedRealtimeNanos() else 0L
@@ -31,7 +68,10 @@ internal object PopupCaptureTrace {
         rasterCount = 0
         waitNanos = 0L
         readbackNanos = 0L
+        stages.clear()
+        captureThread = Thread.currentThread()
         Log.d(TAG, "begin host=${System.identityHashCode(host)} sample=${count + 1} forced=$forced size=${host.width}x${host.height}")
+        captureCpuStart = Debug.threadCpuTimeNanos()
         return SystemClock.elapsedRealtimeNanos()
     }
 
@@ -47,7 +87,14 @@ internal object PopupCaptureTrace {
     @JvmStatic fun end(start: Long, host: View, published: Boolean) {
         if (start == 0L) return
         val total = SystemClock.elapsedRealtimeNanos() - start
+        val cpu = Debug.threadCpuTimeNanos() - captureCpuStart
         active = false
-        Log.d(TAG, "end host=${System.identityHashCode(host)} totalMs=${total / 1e6} hwSnaps=$rasterCount gpuWaitMs=${waitNanos / 1e6} readbackMs=${readbackNanos / 1e6} published=$published")
+        captureThread = null
+        val detail = stages.entries.joinToString(" ") { (name, time) ->
+            "$name=${time.wall / 1e6}/${time.cpu / 1e6}/${time.calls}"
+        }
+        val otherWall = total - stages.values.sumOf { it.wall }
+        val otherCpu = cpu - stages.values.sumOf { it.cpu }
+        Log.d(TAG, "end host=${System.identityHashCode(host)} totalMs=${total / 1e6} cpuMs=${cpu / 1e6} offCpuMs=${(total - cpu) / 1e6} hwSnaps=$rasterCount gpuWaitMs=${waitNanos / 1e6} readbackMs=${readbackNanos / 1e6} published=$published stages(wallMs/cpuMs/calls): $detail other=${otherWall / 1e6}/${otherCpu / 1e6}")
     }
 }

@@ -1351,7 +1351,9 @@ import java.util.WeakHashMap;
         if (backBitmap != null && !backBitmap.isRecycled()
                 && backBitmap.getWidth() == width && backBitmap.getHeight() == height) return;
         recycle(backBitmap);
-        backBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        try (PopupCaptureTrace.Stage allocationTrace = PopupCaptureTrace.section("bitmap_alloc")) {
+            backBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        }
     }
 
     /** Lock-screen wallpaper drawable for in-process notification-card blur. */
@@ -1376,52 +1378,56 @@ import java.util.WeakHashMap;
     }
 
     private static void drawWallpaper(View root, Canvas canvas, View target) {
-        try {
-            Drawable wallpaper = resolveWallpaperDrawable(root.getContext(), target);
-            if (wallpaper == null) return;
-            Rect old = wallpaper.copyBounds();
-            int sourceWidth = Math.max(1, wallpaper.getIntrinsicWidth());
-            int sourceHeight = Math.max(1, wallpaper.getIntrinsicHeight());
-            int width = root.getWidth();
-            int height = root.getHeight();
-            float cover = Math.max(width / (float) sourceWidth, height / (float) sourceHeight);
-            int drawWidth = Math.round(sourceWidth * cover);
-            int drawHeight = Math.round(sourceHeight * cover);
-            int left = (width - drawWidth) / 2;
-            int top = (height - drawHeight) / 2;
-            wallpaper.setBounds(left, top, left + drawWidth, top + drawHeight);
-            // Desktop wallpaper zoom lives on another surface; mirror it for launcher glass.
-            // Lock affordance plates stay 1:1 — chasing WallpaperScaleTracker forced a
-            // redraw every zoom frame on the lock screen.
-            // RapidReaction 分屏/浮窗 are on Overview and must match 清除 (scaled wallpaper).
-            boolean lockOrStatic = isWallpaperOnlyGlass(target) && !isRapidReactionGlass(target);
-            float zoom = lockOrStatic ? 1f : WallpaperScaleTracker.current();
-            int save = canvas.save();
-            if (Math.abs(zoom - 1f) > 0.0005f) {
-                canvas.scale(zoom, zoom, width * 0.5f, height * 0.5f);
-            }
-            wallpaper.draw(canvas);
-            canvas.restoreToCount(save);
-            wallpaper.setBounds(old);
-        } catch (Throwable ignored) { }
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("wallpaper")) {
+            try {
+                Drawable wallpaper = resolveWallpaperDrawable(root.getContext(), target);
+                if (wallpaper == null) return;
+                Rect old = wallpaper.copyBounds();
+                int sourceWidth = Math.max(1, wallpaper.getIntrinsicWidth());
+                int sourceHeight = Math.max(1, wallpaper.getIntrinsicHeight());
+                int width = root.getWidth();
+                int height = root.getHeight();
+                float cover = Math.max(width / (float) sourceWidth, height / (float) sourceHeight);
+                int drawWidth = Math.round(sourceWidth * cover);
+                int drawHeight = Math.round(sourceHeight * cover);
+                int left = (width - drawWidth) / 2;
+                int top = (height - drawHeight) / 2;
+                wallpaper.setBounds(left, top, left + drawWidth, top + drawHeight);
+                // Desktop wallpaper zoom lives on another surface; mirror it for launcher glass.
+                // Lock affordance plates stay 1:1 — chasing WallpaperScaleTracker forced a
+                // redraw every zoom frame on the lock screen.
+                // RapidReaction 分屏/浮窗 are on Overview and must match 清除 (scaled wallpaper).
+                boolean lockOrStatic = isWallpaperOnlyGlass(target) && !isRapidReactionGlass(target);
+                float zoom = lockOrStatic ? 1f : WallpaperScaleTracker.current();
+                int save = canvas.save();
+                if (Math.abs(zoom - 1f) > 0.0005f) {
+                    canvas.scale(zoom, zoom, width * 0.5f, height * 0.5f);
+                }
+                wallpaper.draw(canvas);
+                canvas.restoreToCount(save);
+                wallpaper.setBounds(old);
+            } catch (Throwable ignored) { }
+        }
     }
 
     static Drawable resolveWallpaperDrawable(android.content.Context context, View target) {
-        WallpaperManager wm = WallpaperManager.getInstance(context);
-        if (wantsLockWallpaper(target)) {
-            Drawable lock = peekOplusLockWallpaper(context);
-            if (lock != null) return lock;
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("wallpaper_lookup")) {
+            WallpaperManager wm = WallpaperManager.getInstance(context);
+            if (wantsLockWallpaper(target)) {
+                Drawable lock = peekOplusLockWallpaper(context);
+                if (lock != null) return lock;
+                try {
+                    java.lang.reflect.Method getDrawable =
+                            WallpaperManager.class.getMethod("getDrawable", int.class);
+                    Object d = getDrawable.invoke(wm, WallpaperManager.FLAG_LOCK);
+                    if (d instanceof Drawable) return (Drawable) d;
+                } catch (Throwable ignored) { }
+            }
             try {
-                java.lang.reflect.Method getDrawable =
-                        WallpaperManager.class.getMethod("getDrawable", int.class);
-                Object d = getDrawable.invoke(wm, WallpaperManager.FLAG_LOCK);
-                if (d instanceof Drawable) return (Drawable) d;
-            } catch (Throwable ignored) { }
-        }
-        try {
-            return wm.getDrawable();
-        } catch (Throwable ignored) {
-            return null;
+                return wm.getDrawable();
+            } catch (Throwable ignored) {
+                return null;
+            }
         }
     }
 
