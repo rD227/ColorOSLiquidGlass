@@ -160,3 +160,52 @@ Cos14 软件合成和拖动路径保持原有行为。缓存显式标记 `shared
 
 设备测试通过实际反射调用验证：正常返回 null、方法不存在、类不存在、方法抛异常分别落入不同结果，
 并验证下一次采样清空计数。抓真实操作时仍需先安装新版并重启桌面组件，再反复打开、关闭同一个大菜单。
+
+
+## 1.3.13：成功查询为空时结束查找，缓存方法元数据
+
+### 根因与已核实的接口
+
+1.3.12 的 144 对采样中，三个系统接口均成功返回 null，随后每次仍执行 View 树扫描和桌面图标关联扫描。
+错误的状态表达是把“成功查询后没有打开的文件夹”和“查询不可用/失败”都折叠成 null。
+其中图标关联扫描平均 7.351 ms，树扫描 0.545 ms；系统接口查询平均 3.058 ms。
+这些均为上一版特定菜单的实测，不是本次修复已取得的收益。
+
+已读取手机 `/system_ext/priv-app/OplusLauncher/OplusLauncher.apk`（16.3.16 / 160030016）：
+SHA-256 `78c9acfbfab9374e054da7065cec51b83c01e1d08bf95273828aad0cf5cfd5b4`。
+`AbstractFloatingView.getOpenFolder(ActivityContext)` 调用 `getOpenView(context, TYPE_FOLDER)`，
+后者检查 DragLayer 与 Launcher 的 RecentContainer，匹配文件夹类型且 `isOpen()` 为 true。
+因此正常返回 null 可以作为当前没有打开文件夹的答案。
+本机反编译证据保存于 `app/build/launcher-query-inspect/AbstractFloatingView.java`，不随源码提交 APK 或反编译文件。
+
+### 修改
+
+新增 Kotlin `OpenFolderQuery`，返回 `available` 与 `folder`，明确区分查询失败和有效空结果。
+通过精确参数 ActivityContext、static 修饰符、Folder 返回类型与 Launcher 类型匹配确认 API，
+避免以前只按方法名和参数数量挑选重载。
+
+`ClassValue` 按 Launcher 的实际 Class 缓存 Method 及不可用的解析结果，区分不同 ClassLoader。
+不持有 Launcher 实例，也不缓存文件夹状态；每次采样都重新调用系统方法。
+调用阶段的异常只让本次走兼容路径，不将异常结果写入方法缓存。
+
+正常返回 null 立即结束查询。正常返回文件夹时仍执行原来的可见性、尺寸和打开状态验证。
+接口缺失、签名不兼容或调用失败时，保留 Folder / OplusFolder 的旧接口查询与树、图标关联扫描。
+没有降低刷新率、改变模糊效果或加入延迟。
+新类用 Kotlin，现有 Java 调用入口保留 Java，通过静态入口和属性 getter 互操作。
+
+### 验证
+
+`OpenFolderQueryProbe` 在设备上调用生产查询入口，验证：
+- 即使兼容树中存在候选文件夹，权威 null 也不再落入扫描（旧代码会返回候选对象）。
+- null → 文件夹 A → 文件夹 B → null，每次都反映当前状态。
+- 系统调用异常时保留兼容查找，异常恢复后能够继续查询。
+- 同名错误重载不会被选中，不兼容的 Launcher 类型不会被错误传入系统接口。
+- 方法元数据复用。
+
+另用隔离 ClassLoader 加载手机真实 Launcher APK（绕过测试类），验证生产解析器得到实际签名：
+`public static Folder AbstractFloatingView.getOpenFolder(ActivityContext)`。
+既有 GPU、模糊、通知、菜单、文件夹回归测试均通过；不安装测试 APK、不重启桌面。
+
+安装 1.3.13 并重启桌面后，普通桌面无打开文件夹的采样应仅有一次系统查询，
+`folder_tree`、`folder_icons` 不再出现。`folder_query_cache.resolve` 在解析发生且诊断已开启时记录。
+仍需用相同菜单复测，确认耗时变化和打开文件夹内部长按时的视觉效果。

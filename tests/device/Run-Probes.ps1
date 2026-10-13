@@ -17,6 +17,10 @@ $kotlinArguments = @(
     ('"' + (Join-Path $PSScriptRoot 'HeadsUpRouteProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'NotificationAndPopupProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'OemNotificationContractProbe.kt').Replace('\', '/') + '"'),
+    ('"' + (Join-Path $PSScriptRoot 'OpenFolderQueryProbe.kt').Replace('\', '/') + '"'),
+    ('"' + (Join-Path $PSScriptRoot 'launcher/ActivityContext.kt').Replace('\', '/') + '"'),
+    ('"' + (Join-Path $PSScriptRoot 'launcher/AbstractFloatingView.kt').Replace('\', '/') + '"'),
+    ('"' + (Join-Path $PSScriptRoot 'launcher/Folder.kt').Replace('\', '/') + '"'),
     '-classpath', ('"' + "$androidJar;$appClasses;$kotlinClasses".Replace('\', '/') + '"'),
     '-language-version', '2.0', '-api-version', '2.0',
     ('"-Xfriend-paths=' + $kotlinClasses.Replace('\', '/') + '"'),
@@ -42,3 +46,5 @@ foreach ($name in $probeNames) {
 if ($LASTEXITCODE) { throw 'Heads-up route probe failed' }
 & $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.NotificationAndPopupProbeKt'
 if ($LASTEXITCODE) { throw 'Notification and popup probe failed' }
+& $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.OpenFolderQueryProbeKt'
+if ($LASTEXITCODE) { throw 'Open-folder query probe failed' }

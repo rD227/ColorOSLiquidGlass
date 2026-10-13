@@ -1454,9 +1454,15 @@ final class DesktopIconOverlay {
                 try (PopupCaptureTrace.Stage stage = PopupCaptureTrace.section("folder_oem")) {
                     if (launcher != null) {
                         ClassLoader cl = launcher.getClass().getClassLoader();
-                        View fromAfv = invokeOpenFolder(launcher, cl,
-                                "com.android.launcher3.AbstractFloatingView", "getOpenFolder");
-                        if (fromAfv != null) return fromAfv;
+                        OpenFolderQuery.Result query = OpenFolderQuery.query(launcher);
+                        if (query.getAvailable()) {
+                            View fromAfv = query.getFolder();
+                            // A successful null is the current authoritative answer, not an API
+                            // failure. Do not scan every desktop page to rediscover that answer.
+                            if (fromAfv == null) return null;
+                            if (isFolderCurrentlyOpen(fromAfv)) return fromAfv;
+                            PopupCaptureTrace.outcome("folder_query", "returned_not_open");
+                        }
                         for (String cls : new String[] {
                                 "com.android.launcher3.folder.Folder",
                                 "com.android.launcher3.folder.OplusFolder"
