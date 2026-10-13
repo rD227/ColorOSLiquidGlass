@@ -33,6 +33,7 @@ import net.z841973620.colorosliquidglass.glass.GlassDrawable;
 import net.z841973620.colorosliquidglass.glass.GlassInstaller;
 import net.z841973620.colorosliquidglass.glass.LauncherAshmemMode;
 import net.z841973620.colorosliquidglass.glass.NotificationCardGlass;
+import net.z841973620.colorosliquidglass.glass.PopupCaptureTrace;
 import net.z841973620.colorosliquidglass.glass.NotificationPlateDrawable;
 import net.z841973620.colorosliquidglass.glass.HeadsUpState;
 import net.z841973620.colorosliquidglass.glass.TaskContentOverlay;
@@ -994,39 +995,44 @@ public final class ModuleMain extends XposedModule {
         if (host.getAlpha() < 1f) host.setAlpha(1f);
         clearDeepShortcutRowFills(host);
         Runnable install = () -> {
-            if (!menuStyleEnabled() || !host.isAttachedToWindow()) return;
-            // Several nested OEM entry points reach installation during one open.
-            GlassDrawable existing = GlassInstaller.get(host);
-            if (existing != null && host.getBackground() == existing) {
+            long trace = PopupCaptureTrace.installStart();
+            try {
+                if (!menuStyleEnabled() || !host.isAttachedToWindow()) return;
+                // Several nested OEM entry points reach installation during one open.
+                GlassDrawable existing = GlassInstaller.get(host);
+                if (existing != null && host.getBackground() == existing) {
+                    GlassInstaller.requestPopupCapture(host);
+                    return;
+                }
+                clearDeepShortcutRowFills(host);
+                float[] radii = readPopupPanelRadii(host);
+                if (radii == null && host.getBackground() instanceof GlassDrawable) {
+                    try {
+                        radii = ((GlassDrawable) host.getBackground()).getCornerRadii();
+                    } catch (Throwable ignored) { }
+                }
+                suppressPopupPanelOemLayer(host);
+                host.setTag(TAG_DESKTOP_POPUP);
+                View workspace = findWorkspaceNear(host);
+                if (workspace != null) {
+                    GlassInstaller.setOverlaySource(host, workspace);
+                }
+                GlassInstaller.installBackground(host, currentConfig());
+                GlassDrawable glass = GlassInstaller.get(host);
+                if (glass == null) return;
+                if (radii != null) {
+                    glass.setCornerRadii(radii);
+                } else {
+                    float r = resolvePopupCornerFallback(host);
+                    glass.setCornerRadii(r, r, r, r);
+                }
+                // Let layout/animation geometry settle for this frame, then sample once in PreDraw.
+                if (host.getWidth() <= 0 || host.getHeight() <= 0) return;
                 GlassInstaller.requestPopupCapture(host);
-                return;
+                host.invalidate();
+            } finally {
+                PopupCaptureTrace.installEnd(trace, host);
             }
-            clearDeepShortcutRowFills(host);
-            float[] radii = readPopupPanelRadii(host);
-            if (radii == null && host.getBackground() instanceof GlassDrawable) {
-                try {
-                    radii = ((GlassDrawable) host.getBackground()).getCornerRadii();
-                } catch (Throwable ignored) { }
-            }
-            suppressPopupPanelOemLayer(host);
-            host.setTag(TAG_DESKTOP_POPUP);
-            View workspace = findWorkspaceNear(host);
-            if (workspace != null) {
-                GlassInstaller.setOverlaySource(host, workspace);
-            }
-            GlassInstaller.installBackground(host, currentConfig());
-            GlassDrawable glass = GlassInstaller.get(host);
-            if (glass == null) return;
-            if (radii != null) {
-                glass.setCornerRadii(radii);
-            } else {
-                float r = resolvePopupCornerFallback(host);
-                glass.setCornerRadii(r, r, r, r);
-            }
-            // Let layout/animation geometry settle for this frame, then sample once in PreDraw.
-            if (host.getWidth() <= 0 || host.getHeight() <= 0) return;
-            GlassInstaller.requestPopupCapture(host);
-            host.invalidate();
         };
         if (host.getWidth() > 0 && host.getHeight() > 0) {
             install.run();

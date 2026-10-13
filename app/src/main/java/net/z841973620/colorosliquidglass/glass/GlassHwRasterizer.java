@@ -42,9 +42,11 @@ final class GlassHwRasterizer {
             }
             renderer.setContentRoot(node);
             renderer.setSurface(reader.getSurface());
+            long waitStart = PopupCaptureTrace.stamp();
             int sync = renderer.createRenderRequest()
                     .setWaitForPresent(true)
                     .syncAndDraw();
+            PopupCaptureTrace.gpuWait(waitStart);
             if (sync != HardwareRenderer.SYNC_OK
                     && sync != HardwareRenderer.SYNC_REDRAW_REQUESTED) {
                 return null;
@@ -57,7 +59,9 @@ final class GlassHwRasterizer {
                 Bitmap hardware = Bitmap.wrapHardwareBuffer(buffer,
                         ColorSpace.get(ColorSpace.Named.SRGB));
                 if (hardware == null || hardware.isRecycled()) return null;
+                long readbackStart = PopupCaptureTrace.stamp();
                 Bitmap software = hardware.copy(Bitmap.Config.ARGB_8888, false);
+                PopupCaptureTrace.readback(readbackStart);
                 if (hardware != software) hardware.recycle();
                 return software == null || software.isRecycled() ? null : software;
             } finally {

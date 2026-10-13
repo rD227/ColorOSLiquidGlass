@@ -967,6 +967,7 @@ import java.util.WeakHashMap;
     }
 
     private void capture(View root, View target, boolean forced) {
+        long trace = PopupCaptureTrace.begin(target, forced);
         View owner = captureOwner(target);
         float oldAlpha = owner.getAlpha();
         recording = true;
@@ -1183,6 +1184,7 @@ import java.util.WeakHashMap;
             }
             owner.setAlpha(oldAlpha);
             recording = false;
+            PopupCaptureTrace.end(trace, target, complete);
         }
         if (complete) {
             Bitmap previous = frontBitmap;
