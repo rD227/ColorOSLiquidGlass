@@ -22,10 +22,15 @@ ai写得太快了，但是我尽量的去看了，~~但是原仓库压一堆写�
 
 就是比如说滑块设计得有问题，就是滑条不应该在被触碰得时候更改键值，而应该在滑块触碰得时候才能更改键值否则是很容易误触得
 
+**考虑做了LICENSE变更**
+
+~~因为闭源模块比较多~~（不过也没什么？（（
+
+虽然没啥用（
 
 使用 LSPosed API 101
 
-目前适用于 ColorOS 16 (仅在金标系统上测试：原仓库 新加的玻璃没有在金标上测试，只在211紫标上测试) 和 ColorOS 14，其它版本未测试 (实现液态玻璃效果至少需要 Android 13)
+目前适用于 ColorOS 16 (仅在金标系统上测试：原仓库 新加的玻璃没有在金标上测试，只在211紫标上测试) 和 ColorOS 14，其它版本未测试 (实现液态玻璃效果至少需要 Android 13)（我没明白，模糊效果vico的库其实对Android11都有兼容了
 
 ColorOS 16:<br>
 <img width="228" height="495" alt="Screenshot_01" src="imgs/Screenshot_01.jpg" /> <img width="228" height="495" alt="Screenshot_02" src="imgs/Screenshot_02.jpg" /> <img width="228" height="495" alt="Screenshot_03" src="imgs/Screenshot_03.png" />
