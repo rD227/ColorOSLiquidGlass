@@ -202,6 +202,14 @@ public final class ModuleMain extends XposedModule {
                 View owner = (View) chain.getArg(2);
                 if (!config.enabled || !config.notificationGlassEnabled
                         || (!config.headsUpGlassEnabled && detector.isHeadsUp(owner))) return chain.proceed();
+                // Experiment: expansion completion installs a new, header-sized plate.
+                // Return no background at that handoff instead of introducing another lens.
+                if ((Boolean) chain.getArg(1)) {
+                    if (net.z841973620.colorosliquidglass.glass.NotificationGlassTrace.enabled()) {
+                        android.util.Log.d("ColgNotifTrace", "expandedHeaderBackgroundSuppressed");
+                    }
+                    return null;
+                }
                 // The OEM factory installs a separate blur drawable for headers. Replace that
                 // factory result directly, preserving NotificationChildrenContainer's clipping.
                 NotificationPlateDrawable plate = new NotificationPlateDrawable(host, config, () -> detector.isHeadsUp(owner),
