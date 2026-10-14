@@ -33,6 +33,7 @@ public final class GlassDrawable extends Drawable {
             uniform float blurRadius;
             uniform float refractionHeight;
             uniform float refractionAmount;
+            uniform float bottomRefractionEnabled;
             uniform float depthEffect;
             uniform float chromaticAberration;
             uniform float glassIntensity;
@@ -103,8 +104,12 @@ public final class GlassDrawable extends Drawable {
                 float rimWidth = max(1.5, min(max(refractionHeight, 6.0), 18.0));
                 // SDF is negative inside: the rim fades from 1 at the edge to 0 inward.
                 float rim = smoothstep(-rimWidth, 0.0, sd);
+                // Group headers have square bottom corners: the nearest straight edge
+                // identifies their internal lower seam without suppressing the side rims.
+                bool bottomEdge = centered.y > 0.0
+                    && halfSize.y - centered.y <= halfSize.x - abs(centered.x);
                 bool refracts = refractionHeight > 0.0 && refractionAmount > 0.0
-                    && -sd < refractionHeight;
+                    && -sd < refractionHeight && (bottomRefractionEnabled > 0.5 || !bottomEdge);
                 half4 color = vibrant(coord);
                 // The SDF normal is discontinuous on the medial axes of a flat face.
                 // It describes the boundary, so only use it for rim light or edge refraction.
@@ -153,7 +158,7 @@ public final class GlassDrawable extends Drawable {
     private boolean shaderFailureLogged;
     private int alpha = 255;
     private float refractionReferenceSize;
-    private boolean refractionEnabled = true;
+    private boolean bottomRefractionEnabled = true;
     private NotificationGlassTrace notificationTrace;
 
     public void setNotificationTrace(NotificationGlassTrace trace) {
@@ -169,10 +174,10 @@ public final class GlassDrawable extends Drawable {
 
     public float getRefractionReferenceSize() { return refractionReferenceSize; }
 
-    /** Disable optical displacement only; retain the blur, rim width and lighting. */
-    public void setRefractionEnabled(boolean enabled) {
-        if (refractionEnabled == enabled) return;
-        refractionEnabled = enabled;
+    /** Group headers exclude the internal bottom seam; all other edges keep their optics. */
+    public void setBottomRefractionEnabled(boolean enabled) {
+        if (bottomRefractionEnabled == enabled) return;
+        bottomRefractionEnabled = enabled;
         invalidateSelf();
     }
 
@@ -311,9 +316,9 @@ public final class GlassDrawable extends Drawable {
                 float materialSize = refractionReferenceSize > 0f ? refractionReferenceSize : min;
                 float refractionHeightPx = Math.max(0f, config.refractionHeight) * intensity * materialSize * 0.5f;
                 runtimeShader.setFloatUniform("refractionHeight", refractionHeightPx);
-                float refractionAmountPx = refractionEnabled
-                        ? Math.max(0f, config.refractionAmount) * intensity * materialSize : 0f;
+                float refractionAmountPx = Math.max(0f, config.refractionAmount) * intensity * materialSize;
                 runtimeShader.setFloatUniform("refractionAmount", refractionAmountPx);
+                runtimeShader.setFloatUniform("bottomRefractionEnabled", bottomRefractionEnabled ? 1f : 0f);
                 if (notificationTrace != null) {
                     notificationTrace.record(this, canvas, refractionHeightPx, refractionAmountPx);
                 }

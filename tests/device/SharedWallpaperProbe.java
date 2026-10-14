@@ -149,6 +149,7 @@ public final class SharedWallpaperProbe {
             shader.setFloatUniform(name, 0);
         }
         shader.setFloatUniform("surfaceOpacity", 1);
+        shader.setFloatUniform("bottomRefractionEnabled", 1);
         return shader;
     }
 

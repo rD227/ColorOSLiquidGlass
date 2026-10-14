@@ -41,9 +41,9 @@ class NotificationPlateDrawable(
         val material = glass ?: GlassDrawable(host, config).also {
             it.callback = host
             it.setNotificationTrace(trace)
-            // The independent group header must not introduce a second refracting edge.
+            // Suppress only the internal seam below the independent group header.
             // Keep the shared config intact for notification cards and banners.
-            it.setRefractionEnabled(!header)
+            it.setBottomRefractionEnabled(!header)
             glass = it
         }
         source.update(material, config, headsUp.asBoolean)

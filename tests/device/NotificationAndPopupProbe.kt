@@ -170,8 +170,8 @@ fun main() {
     check(Color.red(changed.getPixel(60, 32)) > 240 && Color.blue(changed.getPixel(60, 32)) < 5) {
         "GPU popup reused a stale source"
     }
-    // Per-material header policy must match zero optical displacement without mutating
-    // the config shared with cards. Exercise the production GPU draw/uniform path.
+    // A header excludes only its bottom seam. Check all pixels against independent
+    // fully-refracting and zero-displacement renders through the production GPU path.
     for (y in 0 until 64) for (x in 0 until 128) {
         source.setPixel(x, y, if ((x / 8 + y / 8) % 2 == 0) Color.BLACK else Color.WHITE)
     }
@@ -180,29 +180,45 @@ fun main() {
     config.refractionAmount = 0.35f
     config.chromaticAberration = 0.6f
     val refracted = render()
-    glass.setRefractionEnabled(false)
-    val nonRefracting = render()
+    glass.setBottomRefractionEnabled(false)
+    val bottomExcluded = render()
     check(config.refractionAmount == 0.35f) { "Header changed shared notification config" }
     config.refractionAmount = 0f
     val zeroAmount = render()
-    var displacedPixels = 0
+    var removedBottomPixels = 0
+    var retainedEdgePixels = 0
     for (y in 0 until 64) for (x in 0 until 128) {
-        check(nonRefracting.getPixel(x, y) == zeroAmount.getPixel(x, y)) {
-            "Disabled header refraction changed blur, opacity or lighting at $x,$y"
+        val bottomDistance = 64f - (y + 0.5f)
+        val sideDistance = minOf(x + 0.5f, 128f - (x + 0.5f))
+        val actual = bottomExcluded.getPixel(x, y)
+        if (y >= 32 && bottomDistance == sideDistance) {
+            // On the exact corner bisector both edges are equally near. Raster transform
+            // roundoff can choose either edge; neither choice may introduce a third color.
+            check(actual == zeroAmount.getPixel(x, y) || actual == refracted.getPixel(x, y)) {
+                "Header corner bisector produced an unrelated color at $x,$y"
+            }
+            continue
         }
-        if (refracted.getPixel(x, y) != nonRefracting.getPixel(x, y)) displacedPixels++
+        val onBottom = y >= 32 && bottomDistance < sideDistance
+        val expected = if (onBottom) zeroAmount.getPixel(x, y) else refracted.getPixel(x, y)
+        check(actual == expected) {
+            "Header bottom exclusion changed an unexpected pixel at $x,$y bottom=$onBottom"
+        }
+        if (onBottom && refracted.getPixel(x, y) != expected) removedBottomPixels++
+        if (!onBottom && expected != zeroAmount.getPixel(x, y)) retainedEdgePixels++
     }
-    check(displacedPixels > 100) { "Pattern did not exercise refraction/dispersion" }
+    check(removedBottomPixels > 100) { "Pattern did not exercise bottom refraction/dispersion" }
+    check(retainedEdgePixels > 100) { "Top and side refraction/dispersion disappeared" }
     config.refractionAmount = 0.35f
-    glass.setRefractionEnabled(true)
+    glass.setBottomRefractionEnabled(true)
     val restored = render()
     for (y in 0 until 64) for (x in 0 until 128) {
         check(restored.getPixel(x, y) == refracted.getPixel(x, y)) {
             "Re-enabling optical displacement failed at $x,$y"
         }
     }
-    listOf(refracted, nonRefracting, zeroAmount, restored).forEach { it.recycle() }
-    println("PASS: header optical displacement disabled independently, lighting/opacity retained, shared config unchanged, reversible")
+    listOf(refracted, bottomExcluded, zeroAmount, restored).forEach { it.recycle() }
+    println("PASS: only header bottom optics removed; top/side optics, lighting/opacity, shared config and default behavior retained")
     BackdropCapture.unregister(card)
     checkCaptureTrace(card)
     checkFolderHardwareComposite(context, root)
