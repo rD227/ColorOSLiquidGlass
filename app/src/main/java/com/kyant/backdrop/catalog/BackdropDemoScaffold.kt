@@ -39,6 +39,7 @@ import net.z841973620.colorosliquidglass.R
 @Composable
 fun BackdropDemoScaffold(
     modifier: Modifier = Modifier,
+    overlay: @Composable BoxScope.(backdrop: LayerBackdrop) -> Unit = {},
     content: @Composable BoxScope.(backdrop: LayerBackdrop) -> Unit
 ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -77,6 +78,7 @@ fun BackdropDemoScaffold(
         ) {
             BasicText("Pick an image", Modifier.padding(horizontal = 8.dp), TextStyle(Color.White, 16.sp))
         }
+        overlay(backdrop)
     }
 }
 

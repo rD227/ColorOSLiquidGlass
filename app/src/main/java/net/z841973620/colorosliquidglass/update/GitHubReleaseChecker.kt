@@ -9,7 +9,11 @@ import java.net.URL
 internal object GitHubReleaseChecker {
     private const val ENDPOINT = "https://api.github.com/repos/rD227/ColorOSLiquidGlass/releases/latest"
 
-    fun check(currentVersion: String): String {
+    data class ReleaseStatus(val latestVersion: String, val comparison: Int?, val message: String)
+
+    fun check(currentVersion: String): String = checkRelease(currentVersion).message
+
+    fun checkRelease(currentVersion: String): ReleaseStatus {
         val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
         try {
             connection.connectTimeout = 10_000
@@ -17,7 +21,7 @@ internal object GitHubReleaseChecker {
             connection.setRequestProperty("Accept", "application/vnd.github+json")
             connection.setRequestProperty("User-Agent", "ColorOSLiquidGlass/$currentVersion")
             when (val status = connection.responseCode) {
-                HttpURLConnection.HTTP_OK -> return describe(
+                HttpURLConnection.HTTP_OK -> return parseRelease(
                     currentVersion, connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 )
                 HttpURLConnection.HTTP_NOT_FOUND -> throw IOException("未找到公开的正式版，请前往 GitHub 查看。")
@@ -29,18 +33,22 @@ internal object GitHubReleaseChecker {
         }
     }
 
-    fun describe(currentVersion: String, response: String): String {
+    fun describe(currentVersion: String, response: String): String = parseRelease(currentVersion, response).message
+
+    fun parseRelease(currentVersion: String, response: String): ReleaseStatus {
         val release = JSONObject(response)
         val latest = release.getString("tag_name").trim()
         if (latest.isEmpty() || release.optBoolean("draft") || release.optBoolean("prerelease")) {
             throw IOException("更新服务没有返回有效的正式版信息。")
         }
-        return when (compareVersions(latest, currentVersion)) {
+        val comparison = compareVersions(latest, currentVersion)
+        val message = when (comparison) {
             1 -> "发现新版本 $latest（当前 $currentVersion），可点击下方按钮下载。"
             0 -> "当前已是最新正式版：$latest。"
             -1 -> "最新正式版为 $latest；当前版本 $currentVersion 更新。"
             else -> "最新正式版为 $latest，当前版本为 $currentVersion；版本格式无法自动比较，请前往 GitHub 核对。"
         }
+        return ReleaseStatus(latest, comparison, message)
     }
 
     /** Unknown tag formats are shown to the user instead of claiming they are up to date. */

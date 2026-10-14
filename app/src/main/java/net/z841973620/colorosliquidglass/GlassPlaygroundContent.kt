@@ -47,6 +47,8 @@ import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.RoundedRectangle
 import kotlinx.coroutines.launch
 import net.z841973620.colorosliquidglass.update.GitHubUpdateCard
+import net.z841973620.colorosliquidglass.update.GitHubUpdateDialog
+import net.z841973620.colorosliquidglass.update.GitHubReleaseChecker
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -65,6 +67,7 @@ fun GlassPlaygroundContent() {
     val rotationAnimation = remember { Animatable(0f) }
 
     var isSheetExpanded by remember { mutableStateOf(true) }
+    var availableUpdate by remember { mutableStateOf<GitHubReleaseChecker.ReleaseStatus?>(null) }
     var enabled by remember { mutableStateOf(initial.enabled) }
     var hideDesktopIcons by remember { mutableStateOf(initial.hideDesktopIcons) }
     var modifyMenuStyle by remember { mutableStateOf(initial.modifyMenuStyle) }
@@ -114,7 +117,11 @@ fun GlassPlaygroundContent() {
         }
     }
 
-    BackdropDemoScaffold { backdrop ->
+    BackdropDemoScaffold(overlay = { dialogBackdrop ->
+        availableUpdate?.let { release ->
+            GitHubUpdateDialog(dialogBackdrop, release) { availableUpdate = null }
+        }
+    }) { backdrop ->
         Box(
             Modifier
                 .padding(top = 48.dp)
@@ -247,7 +254,7 @@ fun GlassPlaygroundContent() {
                     PlaygroundSlider("反射", { reflectionIntensity }, 0f..1f, 0.001f, sheetBackdrop) { reflectionIntensity = it }
                     PlaygroundSlider("高光", { highlightIntensity }, 0f..1f, 0.001f, sheetBackdrop) { highlightIntensity = it }
                     PlaygroundSlider("色差", { chromaticAberration }, 0f..1f, 0.001f, sheetBackdrop) { chromaticAberration = it }
-                    GitHubUpdateCard(sheetBackdrop)
+                    GitHubUpdateCard(sheetBackdrop) { availableUpdate = it }
                 }
             }
         }

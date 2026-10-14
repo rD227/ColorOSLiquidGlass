@@ -1,27 +1,43 @@
-# 手动检查更新
+# 手动检查更新与玻璃弹窗
 
-参数设置底部原有 GitHubUpdateCard 只有浏览器下载按钮。当前 MainActivity、App 和更新目录
-均没有自动检查、每日计时、后台任务或更新弹窗实现；仅打开下载链接不会在应用内比较版本。
+参考用户提供的 shizuku-ftp/primitiveFTPd/src/org/primftpd/ui/AboutScreen.kt：
+参数设置底部仅保留“检查更新”。点击后按钮显示“正在检查…”，后台读取 GitHub 最新正式版。
+只有远端版本更高才展示玻璃更新弹窗；已是最新、本地领先、无法比较或请求失败用 Toast 提示。
+检查期间忽略重复点击。没有添加每日计时、启动自动检查、后台任务或自动下载安装。
 
-新增“检查更新”在用户点击时调用 GitHub 最新正式版接口，在 IO 线程读取信息，
-页面直接显示新版本、已是最新、当前版本比正式版更新、格式无法比较或请求失败。
-保留下载按钮和可复制链接。接口说明：
-https://docs.github.com/en/rest/releases/releases#get-the-latest-release
+版本解析返回 ReleaseStatus（标签、比较结果、提示），界面根据比较结果决定是否弹窗，
+不通过匹配提示文字判断状态。数字按段比较，支持 v/V 前缀及末尾补零；未知格式不猜测。
+GitHub 接口说明：https://docs.github.com/en/rest/releases/releases#get-the-latest-release
 
-网络权限仅为主动检查所需。没有添加后台定时检查，也没有新增自动弹窗或下载安装行为。
-数字版本按各段比较，允许一个 v/V 前缀及末尾补零；未知命名（包括预发布标记）不猜测版本顺序。
-超时、HTTP 错误、限流或无公开正式版均显示错误，不显示“已是最新”。
+## 弹窗
 
-下载按钮移除 MAIN/CATEGORY_APP_BROWSER selector，先解析通用 HTTPS 链接的默认浏览器，
-再用其包名打开真实下载链接，避免系统预置浏览器或 GitHub 深链接接管。
-只有可处理通用网页的浏览器才被采用；未设置可用默认浏览器时提示设置或复制链接。
-2026-10-14 只读解析手机默认浏览器结果为 mark.via/.Trampoline，未启动浏览器或安装 APK。
+与设置项共用 drawBackdrop：vibrancy、4 dp 模糊、16/32 dp 折射、Plain 高光、
+32 dp 圆角及 50% 白色表面。按钮采样弹窗自己的导出背景，支持用户更换的壁纸。
+BackdropDemoScaffold 增加默认空 overlay，在所有设置控件及底部选图按钮之后绘制，
+避免弹窗落在滚动面板内部或让选图按钮浮在遮罩上。它与背景同窗口，便于共享玻璃采样层。
+弹窗提供下载及“稍后再说”；外侧点击和返回键均可关闭。内容可滚动，适配较小屏幕。
+成功打开浏览器后关闭弹窗。
 
-Gradle 的 java.util.Properties 导入已移到 plugins 之前，以使用规范的 Kotlin 脚本导入位置。
-用户将版本名改为 1.4.0 的未提交修改保留。应用源码曾成功编译，打包清理阶段因
-app/release 目录被其他程序占用失败。之后按用户要求不再构建；最终默认浏览器修改尚未重新编译。
-GitHubReleaseProbe 覆盖数字比较、相等、本地领先、未知标签、无效返回；该新增探针尚待运行。
+## 默认浏览器与编译修复
 
-诊断开关是 Log.isLoggable("ColgPopupPerf", Log.DEBUG)，按 Android 日志最低级别控制。
-DEBUG 允许诊断采样，INFO 级别高于 DEBUG，因此阻止 DEBUG 诊断执行；它不是布尔开关。
-关闭时也可恢复开始前的空属性。该设置仅控制 ColgPopupPerf 标签，不会关闭系统其他日志。
+移除非公开 SDK 字段 ResolveInfo.handleAllWebDataURI。
+仅使用公开的 resolveActivity / queryIntentActivities：通用 HTTPS 链接的默认处理器必须
+也是查询到的候选处理器，才能用它的包名打开真实下载链接；系统选择器不算已选浏览器。
+不设置 MAIN/CATEGORY_APP_BROWSER selector，也不指定系统预置浏览器。
+没有默认浏览器或打开失败时提示用户设置/复制链接；不自动改写用户默认项。
+
+## 验证
+
+2026-10-14 assembleRelease 已通过，生成 1.4.0 签名 APK，保留用户现有版本名修改。
+GitHubReleaseProbe 覆盖数字比较、相等、本地领先、未知格式、无效返回，以及弹窗的结构化判断。
+设备实际解析下载 Intent 到 mark.via，未启动浏览器；实网检查返回正式版 v1.3.5，
+当前本地版本 1.4.0，因此此时只提示本地版本更新，不应显示发现新版的弹窗。
+已有设备回归测试继续保留。界面的最终外观尚需用户安装后确认；测试未替换已安装模块。
+
+日志：app/build/update-dialog-build.log、update-dialog-probes.log、update-dialog-live.log。
+
+## 诊断开关
+
+Log.isLoggable("ColgPopupPerf", Log.DEBUG) 按最低日志级别控制。
+DEBUG 开启，INFO 阈值高于 DEBUG，因此关闭这套 DEBUG 诊断；也可恢复开始前的空属性。
+它只控制该标签，不会关闭系统其他日志。
