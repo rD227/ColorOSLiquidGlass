@@ -7,5 +7,8 @@ import android.widget.FrameLayout
 class ExpandableNotificationRow(context: Context) : FrameLayout(context) {
     var headsUp = false
     var disappearing = false
+    var summaryWithChildren = false
+    var collapsedHeight = 310
     fun isHeadsUpState(): Boolean = headsUp || disappearing
+    fun isSummaryWithChildren(): Boolean = summaryWithChildren
 }

@@ -11,6 +11,8 @@ fun main(arguments: Array<String>) {
     val header = loader.loadClass("com.oplus.systemui.statusbar.notification.stack.NotificationChildrenContainerExtImp")
     header.getDeclaredMethod("getHeaderBgDrawable", View::class.java, Boolean::class.javaPrimitiveType, row)
     check(row.getMethod("getTopCornerRadius").returnType == Float::class.javaPrimitiveType)
+    check(row.getMethod("getCollapsedHeight").returnType == Int::class.javaPrimitiveType)
+    check(row.getMethod("isSummaryWithChildren").returnType == Boolean::class.javaPrimitiveType)
     val banner = loader.loadClass("com.oplus.systemui.notification.interruption.fullscreenbanner.view.FullScreenBannerContainer")
     banner.getDeclaredMethod("onViewAttachedToWindow", View::class.java)
     check(View::class.java.isAssignableFrom(banner.getDeclaredField("mFullScreenBanner").type))

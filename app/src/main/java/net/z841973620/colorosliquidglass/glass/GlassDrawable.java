@@ -152,6 +152,29 @@ public final class GlassDrawable extends Drawable {
     private PopupRenderEffect popupEffect;
     private boolean shaderFailureLogged;
     private int alpha = 255;
+    private float refractionReferenceSize;
+    private boolean refractionEnabled = true;
+    private NotificationGlassTrace notificationTrace;
+
+    public void setNotificationTrace(NotificationGlassTrace trace) {
+        notificationTrace = trace;
+    }
+
+    /** Zero keeps the bounds-relative default; notification groups supply their collapsed size. */
+    public void setRefractionReferenceSize(float size) {
+        if (Float.compare(refractionReferenceSize, size) == 0) return;
+        refractionReferenceSize = size;
+        invalidateSelf();
+    }
+
+    public float getRefractionReferenceSize() { return refractionReferenceSize; }
+
+    /** Disable optical displacement only; retain the blur, rim width and lighting. */
+    public void setRefractionEnabled(boolean enabled) {
+        if (refractionEnabled == enabled) return;
+        refractionEnabled = enabled;
+        invalidateSelf();
+    }
 
     public GlassDrawable(View owner, GlassConfig config) {
         this.owner = owner;
@@ -284,10 +307,16 @@ public final class GlassDrawable extends Drawable {
                 // Blur already baked into shaderBitmap (console uses RenderEffect the same way).
                 runtimeShader.setFloatUniform("blurRadius", 0f);
                 float intensity = clamp01(config.glassIntensity);
-                runtimeShader.setFloatUniform("refractionHeight",
-                        Math.max(0f, config.refractionHeight) * intensity * min * 0.5f);
-                runtimeShader.setFloatUniform("refractionAmount",
-                        Math.max(0f, config.refractionAmount) * intensity * min);
+                // Shape bounds animate independently of the group's shared material scale.
+                float materialSize = refractionReferenceSize > 0f ? refractionReferenceSize : min;
+                float refractionHeightPx = Math.max(0f, config.refractionHeight) * intensity * materialSize * 0.5f;
+                runtimeShader.setFloatUniform("refractionHeight", refractionHeightPx);
+                float refractionAmountPx = refractionEnabled
+                        ? Math.max(0f, config.refractionAmount) * intensity * materialSize : 0f;
+                runtimeShader.setFloatUniform("refractionAmount", refractionAmountPx);
+                if (notificationTrace != null) {
+                    notificationTrace.record(this, canvas, refractionHeightPx, refractionAmountPx);
+                }
                 runtimeShader.setFloatUniform("depthEffect", intensity);
                 runtimeShader.setFloatUniform("chromaticAberration",
                         Math.max(0f, Math.min(1f, config.chromaticAberration)));

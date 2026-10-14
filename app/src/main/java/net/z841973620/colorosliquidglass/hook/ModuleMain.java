@@ -194,6 +194,8 @@ public final class ModuleMain extends XposedModule {
             Method factory = extension.getDeclaredMethod("getHeaderBgDrawable", View.class, boolean.class, row);
             Method radius = row.getMethod("getTopCornerRadius");
             HeadsUpState detector = new HeadsUpState(cl);
+            net.z841973620.colorosliquidglass.glass.NotificationRefractionScale refractionScale =
+                    new net.z841973620.colorosliquidglass.glass.NotificationRefractionScale(cl);
             hookOnce(factory, chain -> {
                 GlassConfig config = currentConfig();
                 View host = (View) chain.getArg(0);
@@ -202,8 +204,12 @@ public final class ModuleMain extends XposedModule {
                         || (!config.headsUpGlassEnabled && detector.isHeadsUp(owner))) return chain.proceed();
                 // The OEM factory installs a separate blur drawable for headers. Replace that
                 // factory result directly, preserving NotificationChildrenContainer's clipping.
-                return new NotificationPlateDrawable(host, config, () -> detector.isHeadsUp(owner),
+                NotificationPlateDrawable plate = new NotificationPlateDrawable(host, config, () -> detector.isHeadsUp(owner),
                         () -> notificationCornerRadius(radius, owner), true);
+                plate.setRefractionReferenceSize(() -> refractionScale.referenceSize(owner));
+                net.z841973620.colorosliquidglass.glass.NotificationGlassTrace.headerCreated(
+                        host, owner, (Boolean) chain.getArg(1), plate);
+                return plate;
             });
             log(4, TAG, "Notification group header glass hook installed");
         } catch (ReflectiveOperationException e) {
@@ -549,11 +555,9 @@ public final class ModuleMain extends XposedModule {
      * @return true if glass replaced the OEM LayerBlurDrawable draw
      */
     private boolean drawGlassForConvertParams(Object preview, Canvas canvas, Object params, Object host) {
-        if (canvas == null || params == null || !(host instanceof View)) return false;
+        if (canvas == null || params == null || !(host instanceof View folderIcon)) return false;
         Object bgView = field(preview, "mBgView");
-        if (!(bgView instanceof ImageView)) return false;
-        ImageView image = (ImageView) bgView;
-        View folderIcon = (View) host;
+        if (!(bgView instanceof ImageView image)) return false;
         GlassInstaller.installImage(image, currentConfig());
         GlassDrawable glass = GlassInstaller.get(image);
         if (glass == null) return false;
@@ -732,8 +736,7 @@ public final class ModuleMain extends XposedModule {
                         Object self = chain.getThisObject();
                         if (self instanceof View) ((View) self).setAlpha(0f);
                         Object anim = chain.proceed();
-                        if (anim instanceof ObjectAnimator) {
-                            ObjectAnimator oa = (ObjectAnimator) anim;
+                        if (anim instanceof ObjectAnimator oa) {
                             oa.setFloatValues(0f, 0f);
                             oa.setDuration(0L);
                         }
@@ -774,8 +777,7 @@ public final class ModuleMain extends XposedModule {
             restoreOemPreviewDrawable(preview);
             Drawable oem = field(preview, "mBgDrawable") instanceof Drawable
                     ? (Drawable) field(preview, "mBgDrawable") : null;
-            if (bgView instanceof ImageView) {
-                ImageView image = (ImageView) bgView;
+            if (bgView instanceof ImageView image) {
                 if (GlassInstaller.get(image) != null) {
                     GlassInstaller.restoreImage(image, oem);
                 } else {
@@ -803,8 +805,7 @@ public final class ModuleMain extends XposedModule {
             }
             setFolderBackgroundVisibility(preview, true);
             syncFolderPreview(icon, preview);
-            if (icon instanceof View) {
-                View v = (View) icon;
+            if (icon instanceof View v) {
                 v.invalidate();
                 v.post(() -> {
                     if (isFolderPopupOemOnly(icon)) return;
@@ -828,8 +829,7 @@ public final class ModuleMain extends XposedModule {
         try {
             applyDesktopPopupGlassNow(popup);
             // One follow-up after OEM may restore white fills mid-open animation.
-            if (popup instanceof View) {
-                View root = (View) popup;
+            if (popup instanceof View root) {
                 root.post(() -> {
                     if (menuStyleEnabled() && root.isAttachedToWindow()) {
                         reassertDesktopPopupGlass(popup);
@@ -882,8 +882,7 @@ public final class ModuleMain extends XposedModule {
 
     /** After close animation: drop popup glass bookkeeping (host is leaving the tree). */
     private void finishDesktopPopupGlass(Object popup) {
-        if (!(popup instanceof ViewGroup)) return;
-        ViewGroup root = (ViewGroup) popup;
+        if (!(popup instanceof ViewGroup root)) return;
         java.util.ArrayList<View> hosts = collectDesktopPopupPanelHosts(root);
         for (View host : hosts) {
             try {
@@ -898,9 +897,8 @@ public final class ModuleMain extends XposedModule {
     }
 
     private void applyDesktopPopupGlassNow(Object popup) {
-        if (!menuStyleEnabled() || !(popup instanceof ViewGroup)) return;
+        if (!menuStyleEnabled() || !(popup instanceof ViewGroup root)) return;
         keepPopupBlurTransparent(popup);
-        ViewGroup root = (ViewGroup) popup;
         clearDesktopPopupDividers(root);
         java.util.ArrayList<View> hosts = collectDesktopPopupPanelHosts(root);
         uninstallNestedPopupGlass(root, hosts);
@@ -949,8 +947,7 @@ public final class ModuleMain extends XposedModule {
 
     private static void addPopupPanelHost(
             java.util.ArrayList<View> hosts, Object candidate, ViewGroup popupRoot) {
-        if (!(candidate instanceof View)) return;
-        View view = (View) candidate;
+        if (!(candidate instanceof View view)) return;
         if (view == popupRoot) return;
         if (view.getVisibility() != View.VISIBLE) return;
         if (!hosts.contains(view)) hosts.add(view);

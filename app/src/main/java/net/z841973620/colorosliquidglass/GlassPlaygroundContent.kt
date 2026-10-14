@@ -235,7 +235,7 @@ fun GlassPlaygroundContent() {
                             notificationBackdropFps = notificationFpsOptions[it.toInt()]
                         }
                     }
-                    BasicText("作用于下拉通知卡片和分组标题；关闭时使用壁纸。低帧率仅减少背景更新，滑动保持流畅。")
+                    BasicText("作用于下拉通知卡片和分组标题；关闭时使用壁纸 低帧率仅减少背景更新，滑动保持流畅 ")
                     PlaygroundToggle("菜单采样背景", { menuBackdropEnabled }, sheetBackdrop) {
                         menuBackdropEnabled = it
                         RootController.saveConfig(context, currentConfig()) { _, _ -> }

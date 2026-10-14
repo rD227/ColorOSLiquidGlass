@@ -27,11 +27,13 @@ public final class NotificationCardGlass {
     private final Field cornerRadii;
     private final Field background;
     private final HeadsUpState headsUpState;
+    private final NotificationRefractionScale refractionScale;
     // The view's attach listener owns State. Weak values avoid map -> glass -> view leaks.
     private final Map<View, WeakReference<State>> states = new WeakHashMap<>();
 
     public NotificationCardGlass(Class<?> type) throws ReflectiveOperationException {
         headsUpState = new HeadsUpState(type.getClassLoader());
+        refractionScale = new NotificationRefractionScale(type.getClassLoader());
         actualHeight = method(type, "getActualHeight");
         actualWidth = method(type, "getActualWidth");
         alignedRight = method(type, "isAlignedToRight");
@@ -59,7 +61,14 @@ public final class NotificationCardGlass {
 
         Drawable original = (Drawable) background.get(view);
         // SystemUI intentionally clears the plate for transparent/group-child rows.
-        if (original == null) return;
+        if (original == null) {
+            if (NotificationGlassTrace.enabled()) {
+                WeakReference<State> reference = states.get(view);
+                State previous = reference == null ? null : reference.get();
+                if (previous != null) previous.trace.skipped("OEM background cleared");
+            }
+            return;
+        }
         float[] radii = (float[]) cornerRadii.get(view);
         int left = (Boolean) alignedRight.invoke(view) ? view.getWidth() - width : 0;
         if (animation) left = (view.getWidth() - width) / 2;
@@ -73,7 +82,13 @@ public final class NotificationCardGlass {
         state.source.update(glass, config, headsUpState.isHeadsUp(view));
         glass.setCornerRadii(radii[0], radii[2], radii[4], radii[6]);
         glass.setBounds(left, 0, left + width, bottom);
+        glass.setRefractionReferenceSize(refractionScale.referenceSize(view));
         glass.setAlpha(original.getAlpha());
+        if (NotificationGlassTrace.enabled()) {
+            state.trace.setContext("expanding=" + animation + " actualHeight=" + height
+                    + " clipTop=" + topClip + " clipBottom=" + bottomClip
+                    + " original=" + original.getClass().getSimpleName());
+        }
         int save = canvas.save();
         try {
             if (!animation) canvas.clipRect(0, topClip, view.getWidth(), height - bottomClip);
@@ -111,10 +126,13 @@ public final class NotificationCardGlass {
     private final class State implements View.OnAttachStateChangeListener {
         final GlassDrawable glass;
         final NotificationGlassSource source;
+        final NotificationGlassTrace trace;
 
         State(View view, GlassConfig config) {
             source = new NotificationGlassSource(view);
             glass = new GlassDrawable(view, config);
+            trace = new NotificationGlassTrace(view, "card");
+            glass.setNotificationTrace(trace);
             // Invalidation belongs to the host even though glass is not View.mBackground.
             glass.setCallback(view);
         }

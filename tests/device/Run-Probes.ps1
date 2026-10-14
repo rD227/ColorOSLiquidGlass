@@ -15,6 +15,7 @@ if ($LASTEXITCODE) { throw 'Probe compilation failed; build assembleRelease firs
 $kotlinArguments = @(
     ('"' + (Join-Path $PSScriptRoot 'ExpandableNotificationRow.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'HeadsUpRouteProbe.kt').Replace('\', '/') + '"'),
+    ('"' + (Join-Path $PSScriptRoot 'NotificationRefractionProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'NotificationAndPopupProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'OemNotificationContractProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'OpenFolderQueryProbe.kt').Replace('\', '/') + '"'),
@@ -46,6 +47,8 @@ foreach ($name in $probeNames) {
 }
 & $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.HeadsUpRouteProbeKt'
 if ($LASTEXITCODE) { throw 'Heads-up route probe failed' }
+& $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.NotificationRefractionProbeKt'
+if ($LASTEXITCODE) { throw 'Notification refraction probe failed' }
 & $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.NotificationAndPopupProbeKt'
 if ($LASTEXITCODE) { throw 'Notification and popup probe failed' }
 & $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.OpenFolderQueryProbeKt'
