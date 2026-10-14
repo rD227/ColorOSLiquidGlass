@@ -25,8 +25,9 @@ fun main() {
             else -> error("Unexpected preferences read: ${method.name}")
         }
     } as SharedPreferences
-    check(GlassConfig.read(preferences).menuBackdropFps == 30) { "Existing installs lost default cadence" }
-    for (fps in listOf(10, 15, 30, 60, 90, 120)) {
+    check(GlassConfig().menuBackdropFps == 1) { "New config must default to 1 Hz" }
+    check(GlassConfig.read(preferences).menuBackdropFps == 1) { "Missing preference must default to 1 Hz" }
+    for (fps in listOf(1, 2, 5, 10, 15, 30, 60, 90, 120)) {
         val config = GlassConfig().apply { menuBackdropFps = fps; volumeBackdropFps = 15 }
         check(config.write(preferences))
         val restored = GlassConfig.read(preferences)
@@ -35,7 +36,7 @@ fun main() {
     }
     for (unsupported in listOf(-1, 0, 24, Int.MAX_VALUE)) {
         values["menu_backdrop_fps"] = unsupported
-        check(GlassConfig.read(preferences).menuBackdropFps == 30)
+        check(GlassConfig.read(preferences).menuBackdropFps == 1)
     }
-    println("PASS: old-install default, six menu FPS round trips, volume independence, unsupported imported values")
+    println("PASS: 1 Hz default, nine menu FPS round trips including saved 30 FPS, volume independence, unsupported imported values")
 }

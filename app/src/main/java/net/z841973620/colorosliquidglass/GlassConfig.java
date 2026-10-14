@@ -13,7 +13,7 @@ public final class GlassConfig {
     public int volumeBackdropFps = 30;
     public boolean headsUpGlassEnabled = true;
     public boolean menuBackdropEnabled = true;
-    public int menuBackdropFps = 30;
+    public int menuBackdropFps = 1;
     public boolean notificationAppBackdrop = false;
     public int notificationBackdropFps = 5;
     public float glassIntensity = 1f;
@@ -37,9 +37,10 @@ public final class GlassConfig {
                 || fps == 90 || fps == 120 ? fps : 30;
         c.headsUpGlassEnabled = p.getBoolean("heads_up_glass_enabled", true);
         c.menuBackdropEnabled = p.getBoolean("menu_backdrop_enabled", true);
-        int menuFps = p.getInt("menu_backdrop_fps", 30);
-        c.menuBackdropFps = menuFps == 10 || menuFps == 15 || menuFps == 30
-                || menuFps == 60 || menuFps == 90 || menuFps == 120 ? menuFps : 30;
+        int menuFps = p.getInt("menu_backdrop_fps", 1);
+        c.menuBackdropFps = menuFps == 1 || menuFps == 2 || menuFps == 5
+                || menuFps == 10 || menuFps == 15 || menuFps == 30
+                || menuFps == 60 || menuFps == 90 || menuFps == 120 ? menuFps : 1;
         c.notificationAppBackdrop = p.getBoolean("notification_app_backdrop", false);
         int notificationFps = p.getInt("notification_backdrop_fps", 5);
         c.notificationBackdropFps = notificationFps == 1 || notificationFps == 2

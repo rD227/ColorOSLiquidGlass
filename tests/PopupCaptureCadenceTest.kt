@@ -2,7 +2,7 @@ package net.z841973620.colorosliquidglass.glass
 
 /** Host JVM regression checks; no Android device, sleeps or wall-clock timing required. */
 fun main() {
-    for (fps in listOf(10, 15, 30, 60, 90, 120)) {
+    for (fps in listOf(1, 2, 5, 10, 15, 30, 60, 90, 120)) {
         val cadence = PopupCaptureCadence()
         var captures = 0
         repeat(165) { frame ->
@@ -15,6 +15,22 @@ fun main() {
         check(captures == fps) { "165 Hz idle traversal produced $captures captures at $fps FPS" }
         println("idle 165 Hz traversals -> $captures captures/sec (configured $fps)")
     }
+    val slowCadence = PopupCaptureCadence()
+    slowCadence.started(0, 1, false, false)
+    check(slowCadence.delayMillis(0, false) == 1_000L)
+    check(!slowCadence.isDue(100_000_000, false, false))
+    check(slowCadence.isDue(100_000_000, true, false)) { "1 Hz delayed geometry changes" }
+    slowCadence.started(100_000_000, 1, true, false)
+    check(slowCadence.isDue(110_000_000, false, true)) { "1 Hz delayed opening" }
+    slowCadence.started(110_000_000, 1, false, true)
+    check(slowCadence.isDue(120_000_000, false, false)) { "1 Hz delayed final settled frame" }
+    slowCadence.started(120_000_000, 1, false, false)
+    check(!slowCadence.isDue(1_119_999_999, false, false))
+    check(slowCadence.isDue(1_120_000_000, false, false))
+    slowCadence.started(1_120_000_000, 1, false, false)
+    check(!slowCadence.isDue(1_130_000_000, false, false))
+    slowCadence.request()
+    check(slowCadence.isDue(1_130_000_000, false, false)) { "1 Hz delayed explicit refresh" }
     val cadence = PopupCaptureCadence()
     check(cadence.delayMillis(0, false) == 0L)
     check(cadence.isDue(0, false, false))

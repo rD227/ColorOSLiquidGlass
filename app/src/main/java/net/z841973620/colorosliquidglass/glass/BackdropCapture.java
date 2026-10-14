@@ -797,7 +797,7 @@ import java.util.WeakHashMap;
                 scheduleDesktopPopupPump();
                 return true;
             }
-            int fps = installed == null ? 30 : installed.menuBackdropFps();
+            int fps = installed == null ? 1 : installed.menuBackdropFps();
             desktopPopupCadence.started(now, fps, geometryChanged, opening);
         }
         capture(root, target, taskMenuScaleSettling || desktopPopupSettling || dirty);

@@ -76,6 +76,7 @@ fun GlassPlaygroundContent() {
     var volumeBackdropFps by remember { mutableStateOf(initial.volumeBackdropFps) }
     var headsUpGlassEnabled by remember { mutableStateOf(initial.headsUpGlassEnabled) }
     var menuBackdropEnabled by remember { mutableStateOf(initial.menuBackdropEnabled) }
+    val menuBackdropFpsOptions = remember { listOf(1, 2, 5, 10, 15, 30, 60, 90, 120) }
     var menuBackdropFps by remember { mutableStateOf(initial.menuBackdropFps) }
     var notificationAppBackdrop by remember { mutableStateOf(initial.notificationAppBackdrop) }
     val notificationFpsOptions = remember { listOf(1, 2, 5, 10, 15, 30) }
@@ -243,10 +244,11 @@ fun GlassPlaygroundContent() {
                         RootController.saveConfig(context, currentConfig()) { _, _ -> }
                     }
                     if (menuBackdropEnabled) {
-                        PlaygroundSlider("桌面长按菜单静止采样：$menuBackdropFps FPS",
-                            { backdropFpsOptions.indexOf(menuBackdropFps).toFloat() },
-                            0f..5f, 0.01f, sheetBackdrop, steps = 4) {
-                            menuBackdropFps = backdropFpsOptions[it.toInt()]
+                        PlaygroundSlider("桌面长按菜单静止采样：$menuBackdropFps Hz",
+                            { menuBackdropFpsOptions.indexOf(menuBackdropFps).toFloat() },
+                            0f..menuBackdropFpsOptions.lastIndex.toFloat(), 0.01f, sheetBackdrop,
+                            steps = menuBackdropFpsOptions.size - 2) {
+                            menuBackdropFps = menuBackdropFpsOptions[it.toInt()]
                         }
                         BasicText("静止时减少背景采样；打开、关闭和几何变化仍及时更新。保存后重启系统组件生效")
                     }
