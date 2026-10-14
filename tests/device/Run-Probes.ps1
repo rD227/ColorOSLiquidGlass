@@ -17,6 +17,7 @@ $kotlinArguments = @(
     ('"' + (Join-Path $PSScriptRoot 'HeadsUpRouteProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'NotificationRefractionProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'HeaderEdgeProbe.kt').Replace('\', '/') + '"'),
+    ('"' + (Join-Path $PSScriptRoot 'NotificationGroupSliceProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'NotificationAndPopupProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'OemNotificationContractProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'OpenFolderQueryProbe.kt').Replace('\', '/') + '"'),
@@ -52,6 +53,8 @@ if ($LASTEXITCODE) { throw 'Heads-up route probe failed' }
 if ($LASTEXITCODE) { throw 'Notification refraction probe failed' }
 & $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.HeaderEdgeProbeKt'
 if ($LASTEXITCODE) { throw 'Header edge probe failed' }
+& $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.NotificationGroupSliceProbeKt'
+if ($LASTEXITCODE) { throw 'Notification group slice probe failed' }
 & $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.NotificationAndPopupProbeKt'
 if ($LASTEXITCODE) { throw 'Notification and popup probe failed' }
 & $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.OpenFolderQueryProbeKt'

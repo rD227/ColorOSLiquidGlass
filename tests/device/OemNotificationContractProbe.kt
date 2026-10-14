@@ -21,6 +21,9 @@ fun main(arguments: Array<String>) {
     check(row.getMethod("getTopCornerRadius").returnType == Float::class.javaPrimitiveType)
     check(row.getMethod("getCollapsedHeight").returnType == Int::class.javaPrimitiveType)
     check(row.getMethod("isSummaryWithChildren").returnType == Boolean::class.javaPrimitiveType)
+    NotificationGroupGeometry(
+        loader.loadClass("com.android.systemui.statusbar.notification.row.ActivatableNotificationView"),
+        loader.loadClass("com.android.systemui.statusbar.notification.row.NotificationBackgroundView"))
     val banner = loader.loadClass("com.oplus.systemui.notification.interruption.fullscreenbanner.view.FullScreenBannerContainer")
     banner.getDeclaredMethod("onViewAttachedToWindow", View::class.java)
     check(View::class.java.isAssignableFrom(banner.getDeclaredField("mFullScreenBanner").type))
