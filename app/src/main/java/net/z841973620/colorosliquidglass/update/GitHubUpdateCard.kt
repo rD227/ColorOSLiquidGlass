@@ -6,6 +6,17 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +33,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -99,60 +111,88 @@ internal fun GitHubUpdateDialog(
 ) {
     val context = LocalContext.current
     val dialogBackdrop = rememberLayerBackdrop()
-    BackHandler(onBack = onDismiss)
-    Box(
-        Modifier.fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.3f))
-            .clickable(interactionSource = null, indication = null, onClick = onDismiss)
-            .safeDrawingPadding().padding(24.dp),
-        contentAlignment = Alignment.Center
+    val visibility = remember { MutableTransitionState(false).apply { targetState = true } }
+    val dismiss = { visibility.targetState = false }
+    // The parent removes this overlay in onDismiss. Wait until all child exit
+    // animations finish so the conditional composition cannot cut them off.
+    LaunchedEffect(visibility.isIdle, visibility.currentState, visibility.targetState) {
+        if (visibility.isIdle && !visibility.currentState && !visibility.targetState) onDismiss()
+    }
+    BackHandler(onBack = dismiss)
+    AnimatedVisibility(
+        visibleState = visibility,
+        modifier = Modifier.fillMaxSize(),
+        enter = EnterTransition.None,
+        exit = ExitTransition.None
     ) {
-        Column(
-            Modifier.widthIn(max = 360.dp).fillMaxWidth().heightIn(max = 520.dp)
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { RoundedRectangle(32.dp) },
-                    effects = {
-                        vibrancy()
-                        blur(4.dp.toPx())
-                        lens(16.dp.toPx(), 32.dp.toPx())
-                    },
-                    highlight = { Highlight.Plain },
-                    exportedBackdrop = dialogBackdrop,
-                    onDrawSurface = { drawRect(Color.White.copy(alpha = 0.5f)) }
-                )
-                .clickable(interactionSource = null, indication = null) { }
-                .semantics { dialog(); paneTitle = context.getString(R.string.update_check) }
-                .verticalScroll(rememberScrollState()).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            BasicText(stringResource(R.string.update_available_title, release.latestVersion), style = TextStyle(Color.Black, 20.sp, fontWeight = FontWeight.Medium))
-            BasicText(release.message(context.resources), style = TextStyle(Color.Black, 15.sp, lineHeight = 22.sp))
-            LiquidButton(
-                onClick = {
-                    try {
-                        val intent = defaultBrowserIntent(context.packageManager, DOWNLOAD_URL)
-                        if (intent == null) {
-                            Toast.makeText(context, context.getString(R.string.update_set_browser), Toast.LENGTH_LONG).show()
-                        } else {
-                            context.startActivity(intent)
-                            onDismiss()
-                        }
-                    } catch (_: ActivityNotFoundException) {
-                        Toast.makeText(context, context.getString(R.string.update_browser_missing), Toast.LENGTH_LONG).show()
-                    } catch (_: SecurityException) {
-                        Toast.makeText(context, context.getString(R.string.update_browser_blocked), Toast.LENGTH_LONG).show()
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.matchParentSize()
+                    .animateEnterExit(enter = fadeIn(tween(300)), exit = fadeOut(tween(300)))
+                    .background(Color.Black.copy(alpha = 0.3f))
+                    .clickable(interactionSource = null, indication = null, onClick = dismiss)
+            )
+            Box(
+                Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    Modifier.animateEnterExit(
+                        enter = slideInHorizontally(
+                            initialOffsetX = { -it },
+                            animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow)
+                        ) + fadeIn(),
+                        exit = slideOutHorizontally(
+                            targetOffsetX = { -it },
+                            animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow)
+                        ) + fadeOut()
+                    ).widthIn(max = 360.dp).fillMaxWidth().heightIn(max = 520.dp)
+                        .drawBackdrop(
+                            backdrop = backdrop,
+                            shape = { RoundedRectangle(32.dp) },
+                            effects = {
+                                vibrancy()
+                                blur(4.dp.toPx())
+                                lens(16.dp.toPx(), 32.dp.toPx())
+                            },
+                            highlight = { Highlight.Plain },
+                            exportedBackdrop = dialogBackdrop,
+                            onDrawSurface = { drawRect(Color.White.copy(alpha = 0.5f)) }
+                        )
+                        .clickable(interactionSource = null, indication = null) { }
+                        .semantics { dialog(); paneTitle = context.getString(R.string.update_check) }
+                        .verticalScroll(rememberScrollState()).padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    BasicText(stringResource(R.string.update_available_title, release.latestVersion), style = TextStyle(Color.Black, 20.sp, fontWeight = FontWeight.Medium))
+                    BasicText(release.message(context.resources), style = TextStyle(Color.Black, 15.sp, lineHeight = 22.sp))
+                    LiquidButton(
+                        onClick = {
+                            try {
+                                val intent = defaultBrowserIntent(context.packageManager, DOWNLOAD_URL)
+                                if (intent == null) {
+                                    Toast.makeText(context, context.getString(R.string.update_set_browser), Toast.LENGTH_LONG).show()
+                                } else {
+                                    context.startActivity(intent)
+                                    dismiss()
+                                }
+                            } catch (_: ActivityNotFoundException) {
+                                Toast.makeText(context, context.getString(R.string.update_browser_missing), Toast.LENGTH_LONG).show()
+                            } catch (_: SecurityException) {
+                                Toast.makeText(context, context.getString(R.string.update_browser_blocked), Toast.LENGTH_LONG).show()
+                            }
+                        }, backdrop = dialogBackdrop, modifier = Modifier.fillMaxWidth(),
+                        surfaceColor = Color.White.copy(alpha = 0.5f)
+                    ) { BasicText(stringResource(R.string.update_download), style = TextStyle(Color.Black, 15.sp)) }
+                    SelectionContainer {
+                        BasicText(DOWNLOAD_URL, style = TextStyle(Color.Black, 12.sp, lineHeight = 18.sp))
                     }
-                }, backdrop = dialogBackdrop, modifier = Modifier.fillMaxWidth(),
-                surfaceColor = Color.White.copy(alpha = 0.5f)
-            ) { BasicText(stringResource(R.string.update_download), style = TextStyle(Color.Black, 15.sp)) }
-            SelectionContainer {
-                BasicText(DOWNLOAD_URL, style = TextStyle(Color.Black, 12.sp, lineHeight = 18.sp))
+                    LiquidButton(
+                        onClick = dismiss, backdrop = dialogBackdrop, modifier = Modifier.fillMaxWidth(),
+                        surfaceColor = Color.White.copy(alpha = 0.5f)
+                    ) { BasicText(stringResource(R.string.update_later), style = TextStyle(Color.Black, 15.sp)) }
+                }
             }
-            LiquidButton(
-                onClick = onDismiss, backdrop = dialogBackdrop, modifier = Modifier.fillMaxWidth(),
-                surfaceColor = Color.White.copy(alpha = 0.5f)
-            ) { BasicText(stringResource(R.string.update_later), style = TextStyle(Color.Black, 15.sp)) }
         }
     }
 }
