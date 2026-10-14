@@ -8,6 +8,7 @@ import android.view.View
 import net.z841973620.colorosliquidglass.GlassConfig
 import java.util.function.BooleanSupplier
 import java.util.function.DoubleSupplier
+import java.util.function.Consumer
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
 
@@ -27,6 +28,7 @@ class NotificationPlateDrawable(
     private var plateAlpha = 255
     private val trace = NotificationGlassTrace(host, if (header) "header" else "banner")
     var refractionReferenceSize: DoubleSupplier? = null
+    var groupGeometry: Consumer<GlassDrawable>? = null
 
     init {
         installed[host]?.get()?.let { previous ->
@@ -41,19 +43,30 @@ class NotificationPlateDrawable(
         val material = glass ?: GlassDrawable(host, config).also {
             it.callback = host
             it.setNotificationTrace(trace)
-            // Suppress only the internal seam below the independent group header.
-            // Keep the shared config intact for notification cards and banners.
-            it.setBottomRefractionEnabled(!header)
             glass = it
         }
         source.update(material, config, headsUp.asBoolean)
         material.setRefractionReferenceSize(refractionReferenceSize?.asDouble?.toFloat() ?: 0f)
-        val corner = radius.asDouble.toFloat()
-        material.setCornerRadii(corner, corner,
-            if (header) 0f else corner, if (header) 0f else corner)
-        material.bounds = bounds
+        val geometry = groupGeometry
+        material.setBottomRefractionEnabled(geometry != null || !header)
+        if (geometry != null) {
+            geometry.accept(material)
+        } else {
+            val corner = radius.asDouble.toFloat()
+            material.setCornerRadii(corner, corner,
+                if (header) 0f else corner, if (header) 0f else corner)
+            material.bounds = bounds
+        }
         material.alpha = plateAlpha
-        material.draw(canvas)
+        val save = canvas.save()
+        try {
+            // Draw only the header slice of the full group lens, including its
+            // original top edge. The header's lower seam is not a material boundary.
+            canvas.clipRect(bounds)
+            material.draw(canvas)
+        } finally {
+            canvas.restoreToCount(save)
+        }
     }
 
     override fun setAlpha(alpha: Int) { plateAlpha = alpha; invalidateSelf() }

@@ -196,25 +196,22 @@ public final class ModuleMain extends XposedModule {
             HeadsUpState detector = new HeadsUpState(cl);
             net.z841973620.colorosliquidglass.glass.NotificationRefractionScale refractionScale =
                     new net.z841973620.colorosliquidglass.glass.NotificationRefractionScale(cl);
+            net.z841973620.colorosliquidglass.glass.NotificationGroupGeometry groupGeometry =
+                    new net.z841973620.colorosliquidglass.glass.NotificationGroupGeometry(
+                            Class.forName("com.android.systemui.statusbar.notification.row.ActivatableNotificationView", false, cl),
+                            Class.forName("com.android.systemui.statusbar.notification.row.NotificationBackgroundView", false, cl));
             hookOnce(factory, chain -> {
                 GlassConfig config = currentConfig();
                 View host = (View) chain.getArg(0);
                 View owner = (View) chain.getArg(2);
                 if (!config.enabled || !config.notificationGlassEnabled
                         || (!config.headsUpGlassEnabled && detector.isHeadsUp(owner))) return chain.proceed();
-                // Experiment: expansion completion installs a new, header-sized plate.
-                // Return no background at that handoff instead of introducing another lens.
-                if ((Boolean) chain.getArg(1)) {
-                    if (net.z841973620.colorosliquidglass.glass.NotificationGlassTrace.enabled()) {
-                        android.util.Log.d("ColgNotifTrace", "expandedHeaderBackgroundSuppressed");
-                    }
-                    return null;
-                }
                 // The OEM factory installs a separate blur drawable for headers. Replace that
                 // factory result directly, preserving NotificationChildrenContainer's clipping.
                 NotificationPlateDrawable plate = new NotificationPlateDrawable(host, config, () -> detector.isHeadsUp(owner),
                         () -> notificationCornerRadius(radius, owner), true);
                 plate.setRefractionReferenceSize(() -> refractionScale.referenceSize(owner));
+                plate.setGroupGeometry(material -> groupGeometry.apply(host, (ViewGroup) owner, material));
                 net.z841973620.colorosliquidglass.glass.NotificationGlassTrace.headerCreated(
                         host, owner, (Boolean) chain.getArg(1), plate);
                 return plate;
