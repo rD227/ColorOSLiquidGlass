@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.os.Looper
 import android.view.View
@@ -44,6 +45,9 @@ private class BatchFolderIcon(context: Context, icon: Bitmap) : FrameLayout(cont
 /** Compare real AGSL folder rendering before/after batching, including CPU crops and stacking. */
 fun main() {
     if (Looper.myLooper() == null) Looper.prepareMainLooper()
+    // app_process bypasses application binding's font-map setup. Initialize the real
+    // system defaults before any TextView or text Paint is constructed.
+    Typeface::class.java.getDeclaredMethod("loadPreinstalledSystemFontMap").invoke(null)
     val activityThread = Class.forName("android.app.ActivityThread")
     val thread = activityThread.getMethod("systemMain").invoke(null)
     val context = activityThread.getMethod("getSystemContext").invoke(thread) as Context
