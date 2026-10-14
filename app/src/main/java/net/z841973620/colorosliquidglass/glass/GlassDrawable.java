@@ -595,6 +595,7 @@ public final class GlassDrawable extends Drawable {
     }
 
     int volumeBackdropFps() { return config.volumeBackdropFps; }
+    int menuBackdropFps() { return config.menuBackdropFps; }
 
     boolean backdropEnabled() {
         return config.menuBackdropEnabled || !BackdropCapture.isMenuBackdrop(owner);

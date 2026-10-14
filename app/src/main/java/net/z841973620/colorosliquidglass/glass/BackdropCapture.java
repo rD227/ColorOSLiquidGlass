@@ -26,7 +26,8 @@ import java.util.WeakHashMap;
      * content overlays and explicit previews still need target-local captures.
      * Capture bitmaps stay 1:1 with the glass view so backdrop detail matches screen pixels.
      * Sampling runs every frame while the glass is moving (geometry / drag / wallpaper zoom);
-     * while stationary the last good frame is kept (no idle re-sample).
+     * stationary desktop menus refresh at a configured cadence; other stationary hosts
+     * keep their last good frame.
      * <p>
      * Dragged-folder glass paints wallpaper + {@link DesktopIconOverlay} without hiding
      * {@code *DragView} (hiding flickers). Ordinary folders no longer hide their host or
@@ -420,7 +421,7 @@ import java.util.WeakHashMap;
     private int publishedDragSeedGeneration = -1;
     /** Task-menu open anim scales 0.9→1; track settle so we never freeze a sub-1 frame. */
     private boolean taskMenuScaleSettling;
-    /** Desktop options-menu: resample while open anim runs; freeze once settled with icons. */
+    /** Desktop options-menu remains live; a separate cadence limits its idle captures. */
     private boolean desktopPopupSettling;
     /** Desktop options-menu has published a frame that includes desktop icons. */
     private boolean desktopPopupHasIcons;
@@ -438,6 +439,7 @@ import java.util.WeakHashMap;
     private boolean desktopPopupOpenAnimActive;
     private boolean desktopPopupPumpPosted;
     private final Choreographer.FrameCallback desktopPopupPump;
+    private final PopupCaptureCadence desktopPopupCadence = new PopupCaptureCadence();
     /** Cos16 unlock: invalidate-only pump (page-flip style) — never forceCapture off draw. */
     private boolean unlockFolderPumpPosted;
     private final Choreographer.FrameCallback unlockFolderPump;
@@ -471,6 +473,7 @@ import java.util.WeakHashMap;
                 CAPTURES.put(target, capture);
             }
             capture.desktopPopupOpenAnimActive = animating;
+            capture.desktopPopupCadence.request();
             capture.dirty = true;
             capture.desktopPopupSettling = true;
             capture.skipCaptureFromSelfInvalidate = false;
@@ -481,6 +484,9 @@ import java.util.WeakHashMap;
         }
         if (animating) {
             requestPopupCapture(target);
+        } else {
+            // The final identity-scale frame must not wait for the idle sample deadline.
+            target.invalidate();
         }
         capture.scheduleDesktopPopupPump();
     }
@@ -495,7 +501,9 @@ import java.util.WeakHashMap;
         if (!isDesktopPopupGlass(target)) return;
         desktopPopupPumpPosted = true;
         try {
-            Choreographer.getInstance().postFrameCallback(desktopPopupPump);
+            long delay = desktopPopupCadence.delayMillis(
+                    android.os.SystemClock.elapsedRealtimeNanos(), isDesktopPopupOpening(target));
+            Choreographer.getInstance().postFrameCallbackDelayed(desktopPopupPump, delay);
         } catch (Throwable ignored) {
             desktopPopupPumpPosted = false;
         }
@@ -559,6 +567,11 @@ import java.util.WeakHashMap;
             View host = targetRef.get();
             if (host == null || !host.isAttachedToWindow()) return;
             if (!isDesktopPopupGlass(host)) return;
+            long now = android.os.SystemClock.elapsedRealtimeNanos();
+            if (!desktopPopupCadence.isDue(now, false, isDesktopPopupOpening(host))) {
+                scheduleDesktopPopupPump();
+                return;
+            }
             dirty = true;
             desktopPopupSettling = true;
             skipCaptureFromSelfInvalidate = false;
@@ -638,6 +651,7 @@ import java.util.WeakHashMap;
 
     private void markDirty() {
         dirty = true;
+        desktopPopupCadence.request();
     }
 
     @Override public boolean onPreDraw() {
@@ -774,6 +788,18 @@ import java.util.WeakHashMap;
             }
         }
 
+        if (desktopPopupGlass) {
+            long now = android.os.SystemClock.elapsedRealtimeNanos();
+            boolean opening = isDesktopPopupOpening(target);
+            boolean due = desktopPopupCadence.isDue(now, geometryChanged, opening);
+            PopupCaptureTrace.captureCadence(target, due, geometryChanged || opening);
+            if (!due) {
+                scheduleDesktopPopupPump();
+                return true;
+            }
+            int fps = installed == null ? 30 : installed.menuBackdropFps();
+            desktopPopupCadence.started(now, fps, geometryChanged, opening);
+        }
         capture(root, target, taskMenuScaleSettling || desktopPopupSettling || dirty);
         if (taskMenuScaleSettling && validFrame) {
             taskMenuScaleSettling = false;
@@ -1674,6 +1700,7 @@ import java.util.WeakHashMap;
         desktopPopupAppSnapsClearedForSettle = false;
         desktopPopupOpenAnimActive = false;
         desktopPopupPumpPosted = false;
+        desktopPopupCadence.reset();
         try {
             Choreographer.getInstance().removeFrameCallback(desktopPopupPump);
         } catch (Throwable ignored) { }

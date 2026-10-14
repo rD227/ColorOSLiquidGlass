@@ -19,4 +19,11 @@ class CaptureCadence {
     }
 
     fun reset() { nextCaptureNanos = null }
+
+    /** Round up so a millisecond timer does not repeatedly wake before the deadline. */
+    fun delayMillis(nowNanos: Long): Long {
+        val deadline = nextCaptureNanos ?: return 0L
+        val remaining = deadline - nowNanos
+        return if (remaining <= 0L) 0L else (remaining + 999_999L) / 1_000_000L
+    }
 }

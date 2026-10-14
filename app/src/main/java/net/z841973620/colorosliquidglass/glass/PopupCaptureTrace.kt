@@ -30,6 +30,28 @@ internal object PopupCaptureTrace {
 
     internal class Totals(var wall: Long = 0, var cpu: Long = 0, var calls: Int = 0)
 
+    private class CadenceWindow(val started: Long) {
+        var captures = 0
+        var skipped = 0
+        var moving = 0
+    }
+    private val cadenceWindows = WeakHashMap<View, CadenceWindow>()
+
+    /** Count idle work over time, beyond the first 12 detailed opening samples. */
+    @JvmStatic fun captureCadence(host: View, captured: Boolean, moving: Boolean) {
+        if (!Log.isLoggable(TAG, Log.DEBUG)) return
+        val now = SystemClock.elapsedRealtimeNanos()
+        val window = cadenceWindows.getOrPut(host) { CadenceWindow(now) }
+        if (captured) window.captures++ else window.skipped++
+        if (captured && moving) window.moving++
+        val elapsed = now - window.started
+        if (elapsed >= 1_000_000_000L) {
+            Log.d(TAG, "cadence host=${System.identityHashCode(host)} intervalMs=${elapsed / 1e6} " +
+                "captureAttempts=${window.captures} skipped=${window.skipped} movingCaptures=${window.moving}")
+            cadenceWindows.remove(host)
+        }
+    }
+
     /** Exclusive times: nested work is charged to the child, never counted twice. */
     internal class Stage(val name: String, private val totals: Totals, private val parent: Stage?) : AutoCloseable {
         private val cpuStart = Debug.threadCpuTimeNanos()

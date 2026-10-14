@@ -88,6 +88,7 @@ object RootController {
             preferences.getInt("volume_backdrop_fps", -1) == config.volumeBackdropFps &&
             preferences.getBoolean("heads_up_glass_enabled", !config.headsUpGlassEnabled) == config.headsUpGlassEnabled &&
             preferences.getBoolean("menu_backdrop_enabled", !config.menuBackdropEnabled) == config.menuBackdropEnabled &&
+            preferences.getInt("menu_backdrop_fps", -1) == config.menuBackdropFps &&
             preferences.getBoolean("notification_app_backdrop", !config.notificationAppBackdrop) == config.notificationAppBackdrop &&
             preferences.getInt("notification_backdrop_fps", -1) == config.notificationBackdropFps &&
             preferences.getFloat("glass_intensity", Float.NaN) == config.glassIntensity &&
