@@ -1,10 +1,10 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
-
-import java.util.Properties
 
 fun signingProp(name: String): String? {
     val fromProject = findProperty(name)?.toString()?.takeIf { it.isNotBlank() }
