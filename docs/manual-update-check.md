@@ -41,3 +41,16 @@ GitHubReleaseProbe 覆盖数字比较、相等、本地领先、未知格式、�
 Log.isLoggable("ColgPopupPerf", Log.DEBUG) 按最低日志级别控制。
 DEBUG 开启，INFO 阈值高于 DEBUG，因此关闭这套 DEBUG 诊断；也可恢复开始前的空属性。
 它只控制该标签，不会关闭系统其他日志。
+
+
+## 中英文提示（2026-10-14）
+
+更新相关的比较结果、网络/服务错误、按钮、弹窗标题及浏览器错误统一使用 Android 字符串资源。
+values/strings.xml 为英文默认值，values-zh/strings.xml 为中文；跟随系统提供的应用资源语言，
+非中文语言暂时回退英文。没有手动语言开关或硬编码 Locale.getDefault 分支。
+ReleaseStatus 保存版本数据和比较结果，在展示时根据当前 Resources 格式化，避免把语言锁定在网络请求时。
+网络服务异常保存资源标识及 HTTP 状态；普通网络异常显示本地化提示，不直接显示平台异常消息。
+
+assembleRelease、既有设备回归测试以及资源测试均通过。资源测试直接读取此次 APK，
+分别使用 zh-CN、en-US、de-DE 配置验证四类比较结果、版本占位符和网络错误的中文/英文回退。
+日志：app/build/update-locales-build.log、update-locales-probes.log、update-locales-resources.log。

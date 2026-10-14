@@ -1,5 +1,7 @@
 package net.z841973620.colorosliquidglass.update
 
+import android.content.res.Resources
+import net.z841973620.colorosliquidglass.R
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -9,9 +11,20 @@ import java.net.URL
 internal object GitHubReleaseChecker {
     private const val ENDPOINT = "https://api.github.com/repos/rD227/ColorOSLiquidGlass/releases/latest"
 
-    data class ReleaseStatus(val latestVersion: String, val comparison: Int?, val message: String)
+    data class ReleaseStatus(val latestVersion: String, val comparison: Int?, val currentVersion: String) {
+        fun message(resources: Resources): String = when (comparison) {
+            1 -> resources.getString(R.string.update_available_message, latestVersion, currentVersion)
+            0 -> resources.getString(R.string.update_current_message, latestVersion)
+            -1 -> resources.getString(R.string.update_local_newer_message, latestVersion, currentVersion)
+            else -> resources.getString(R.string.update_unknown_version_message, latestVersion, currentVersion)
+        }
+    }
 
-    fun check(currentVersion: String): String = checkRelease(currentVersion).message
+    private class ServiceException(val messageId: Int, val status: Int = 0) : IOException()
+
+    fun failureMessage(resources: Resources, error: IOException): String =
+        if (error is ServiceException) resources.getString(error.messageId, error.status)
+        else resources.getString(R.string.update_network_error)
 
     fun checkRelease(currentVersion: String): ReleaseStatus {
         val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
@@ -24,31 +37,23 @@ internal object GitHubReleaseChecker {
                 HttpURLConnection.HTTP_OK -> return parseRelease(
                     currentVersion, connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 )
-                HttpURLConnection.HTTP_NOT_FOUND -> throw IOException("未找到公开的正式版，请前往 GitHub 查看。")
-                HttpURLConnection.HTTP_FORBIDDEN, 429 -> throw IOException("GitHub 暂时限制了请求，请稍后再试。")
-                else -> throw IOException("更新服务返回 HTTP $status，请稍后再试。")
+                HttpURLConnection.HTTP_NOT_FOUND -> throw ServiceException(R.string.update_not_found)
+                HttpURLConnection.HTTP_FORBIDDEN, 429 -> throw ServiceException(R.string.update_rate_limited)
+                else -> throw ServiceException(R.string.update_http_error, status)
             }
         } finally {
             connection.disconnect()
         }
     }
 
-    fun describe(currentVersion: String, response: String): String = parseRelease(currentVersion, response).message
-
     fun parseRelease(currentVersion: String, response: String): ReleaseStatus {
         val release = JSONObject(response)
         val latest = release.getString("tag_name").trim()
         if (latest.isEmpty() || release.optBoolean("draft") || release.optBoolean("prerelease")) {
-            throw IOException("更新服务没有返回有效的正式版信息。")
+            throw ServiceException(R.string.update_invalid_release)
         }
         val comparison = compareVersions(latest, currentVersion)
-        val message = when (comparison) {
-            1 -> "发现新版本 $latest（当前 $currentVersion），可点击下方按钮下载。"
-            0 -> "当前已是最新正式版：$latest。"
-            -1 -> "最新正式版为 $latest；当前版本 $currentVersion 更新。"
-            else -> "最新正式版为 $latest，当前版本为 $currentVersion；版本格式无法自动比较，请前往 GitHub 核对。"
-        }
-        return ReleaseStatus(latest, comparison, message)
+        return ReleaseStatus(latest, comparison, currentVersion)
     }
 
     /** Unknown tag formats are shown to the user instead of claiming they are up to date. */

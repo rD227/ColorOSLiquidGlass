@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="update_check">Check for updates</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_unknown_current">Unknown</string>
+    <string name="update_available_title">New version %1$s</string>
+    <string name="update_available_message">Version %1$s is available (current: %2$s). Use the button below to download it.</string>
+    <string name="update_current_message">You are up to date: %1$s.</string>
+    <string name="update_local_newer_message">The latest stable release is %1$s. Your current version %2$s is newer.</string>
+    <string name="update_unknown_version_message">Latest stable: %1$s. Current: %2$s. These version formats cannot be compared automatically. Please check GitHub.</string>
+    <string name="update_network_error">Could not check for updates. Check your connection and try again.</string>
+    <string name="update_parse_error">Could not read the update information. Please try again later.</string>
+    <string name="update_not_found">No public stable release was found. Please check GitHub.</string>
+    <string name="update_rate_limited">GitHub is limiting requests. Please try again later.</string>
+    <string name="update_http_error">The update service returned HTTP %1$d. Please try again later.</string>
+    <string name="update_invalid_release">The update service did not return a valid stable release.</string>
+    <string name="update_set_browser">Set a default browser or copy the link below to download.</string>
+    <string name="update_browser_missing">No browser found. Copy the link below to download.</string>
+    <string name="update_browser_blocked">Could not open the browser. Copy the link below to download.</string>
+    <string name="update_download">Download from GitHub</string>
+    <string name="update_later">Later</string>
+</resources>

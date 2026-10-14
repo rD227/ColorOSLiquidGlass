@@ -30,6 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import net.z841973620.colorosliquidglass.R
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.dialog
 import androidx.compose.ui.semantics.paneTitle
@@ -63,7 +65,7 @@ internal fun GitHubUpdateCard(backdrop: Backdrop, onUpdateAvailable: (GitHubRele
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
     val currentVersion = remember(context) {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "未知"
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: context.getString(R.string.update_unknown_current)
     }
     LiquidButton(
         onClick = {
@@ -73,11 +75,11 @@ internal fun GitHubUpdateCard(backdrop: Backdrop, onUpdateAvailable: (GitHubRele
                     try {
                         val release = withContext(Dispatchers.IO) { GitHubReleaseChecker.checkRelease(currentVersion) }
                         if (release.comparison == 1) onUpdateAvailable(release)
-                        else Toast.makeText(context, release.message, Toast.LENGTH_LONG).show()
+                        else Toast.makeText(context, release.message(context.resources), Toast.LENGTH_LONG).show()
                     } catch (error: IOException) {
-                        Toast.makeText(context, "检查失败：${error.localizedMessage ?: "请检查网络连接。"}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, GitHubReleaseChecker.failureMessage(context.resources, error), Toast.LENGTH_LONG).show()
                     } catch (_: JSONException) {
-                        Toast.makeText(context, "检查失败：无法解析版本信息，请稍后重试。", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, context.getString(R.string.update_parse_error), Toast.LENGTH_LONG).show()
                     } finally {
                         checking = false
                     }
@@ -85,7 +87,7 @@ internal fun GitHubUpdateCard(backdrop: Backdrop, onUpdateAvailable: (GitHubRele
             }
         }, backdrop = backdrop, modifier = Modifier.fillMaxWidth(),
         surfaceColor = Color.White.copy(alpha = 0.5f)
-    ) { BasicText(if (checking) "正在检查…" else "检查更新", style = TextStyle(Color.Black, 15.sp)) }
+    ) { BasicText(stringResource(if (checking) R.string.update_checking else R.string.update_check), style = TextStyle(Color.Black, 15.sp)) }
 }
 
 /** Same-window overlay so glass can sample the existing (including custom) wallpaper. */
@@ -120,37 +122,37 @@ internal fun GitHubUpdateDialog(
                     onDrawSurface = { drawRect(Color.White.copy(alpha = 0.5f)) }
                 )
                 .clickable(interactionSource = null, indication = null) { }
-                .semantics { dialog(); paneTitle = "检查更新" }
+                .semantics { dialog(); paneTitle = context.getString(R.string.update_check) }
                 .verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            BasicText("发现新版本 ${release.latestVersion}", style = TextStyle(Color.Black, 20.sp, fontWeight = FontWeight.Medium))
-            BasicText(release.message, style = TextStyle(Color.Black, 15.sp, lineHeight = 22.sp))
+            BasicText(stringResource(R.string.update_available_title, release.latestVersion), style = TextStyle(Color.Black, 20.sp, fontWeight = FontWeight.Medium))
+            BasicText(release.message(context.resources), style = TextStyle(Color.Black, 15.sp, lineHeight = 22.sp))
             LiquidButton(
                 onClick = {
                     try {
                         val intent = defaultBrowserIntent(context.packageManager, DOWNLOAD_URL)
                         if (intent == null) {
-                            Toast.makeText(context, "请先设置默认浏览器，或复制下方链接下载。", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, context.getString(R.string.update_set_browser), Toast.LENGTH_LONG).show()
                         } else {
                             context.startActivity(intent)
                             onDismiss()
                         }
                     } catch (_: ActivityNotFoundException) {
-                        Toast.makeText(context, "找不到浏览器，可复制下方链接下载。", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, context.getString(R.string.update_browser_missing), Toast.LENGTH_LONG).show()
                     } catch (_: SecurityException) {
-                        Toast.makeText(context, "无法打开浏览器，可复制下方链接下载。", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, context.getString(R.string.update_browser_blocked), Toast.LENGTH_LONG).show()
                     }
                 }, backdrop = dialogBackdrop, modifier = Modifier.fillMaxWidth(),
                 surfaceColor = Color.White.copy(alpha = 0.5f)
-            ) { BasicText("前往 GitHub 下载", style = TextStyle(Color.Black, 15.sp)) }
+            ) { BasicText(stringResource(R.string.update_download), style = TextStyle(Color.Black, 15.sp)) }
             SelectionContainer {
                 BasicText(DOWNLOAD_URL, style = TextStyle(Color.Black, 12.sp, lineHeight = 18.sp))
             }
             LiquidButton(
                 onClick = onDismiss, backdrop = dialogBackdrop, modifier = Modifier.fillMaxWidth(),
                 surfaceColor = Color.White.copy(alpha = 0.5f)
-            ) { BasicText("稍后再说", style = TextStyle(Color.Black, 15.sp)) }
+            ) { BasicText(stringResource(R.string.update_later), style = TextStyle(Color.Black, 15.sp)) }
         }
     }
 }
