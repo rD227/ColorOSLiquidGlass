@@ -30,7 +30,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -184,9 +183,6 @@ internal fun GitHubUpdateDialog(
                         }, backdrop = dialogBackdrop, modifier = Modifier.fillMaxWidth(),
                         surfaceColor = Color.White.copy(alpha = 0.5f)
                     ) { BasicText(stringResource(R.string.update_download), style = TextStyle(Color.Black, 15.sp)) }
-                    SelectionContainer {
-                        BasicText(DOWNLOAD_URL, style = TextStyle(Color.Black, 12.sp, lineHeight = 18.sp))
-                    }
                     LiquidButton(
                         onClick = dismiss, backdrop = dialogBackdrop, modifier = Modifier.fillMaxWidth(),
                         surfaceColor = Color.White.copy(alpha = 0.5f)
