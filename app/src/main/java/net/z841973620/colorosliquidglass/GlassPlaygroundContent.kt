@@ -72,10 +72,11 @@ fun GlassPlaygroundContent() {
     var hideDesktopIcons by remember { mutableStateOf(initial.hideDesktopIcons) }
     var modifyMenuStyle by remember { mutableStateOf(initial.modifyMenuStyle) }
     var notificationGlassEnabled by remember { mutableStateOf(initial.notificationGlassEnabled) }
-    val volumeFpsOptions = remember { listOf(10, 15, 30, 60, 90, 120) }
+    val backdropFpsOptions = remember { listOf(10, 15, 30, 60, 90, 120) }
     var volumeBackdropFps by remember { mutableStateOf(initial.volumeBackdropFps) }
     var headsUpGlassEnabled by remember { mutableStateOf(initial.headsUpGlassEnabled) }
     var menuBackdropEnabled by remember { mutableStateOf(initial.menuBackdropEnabled) }
+    var menuBackdropFps by remember { mutableStateOf(initial.menuBackdropFps) }
     var notificationAppBackdrop by remember { mutableStateOf(initial.notificationAppBackdrop) }
     val notificationFpsOptions = remember { listOf(1, 2, 5, 10, 15, 30) }
     var notificationBackdropFps by remember { mutableStateOf(initial.notificationBackdropFps) }
@@ -96,6 +97,7 @@ fun GlassPlaygroundContent() {
         it.volumeBackdropFps = volumeBackdropFps
         it.headsUpGlassEnabled = headsUpGlassEnabled
         it.menuBackdropEnabled = menuBackdropEnabled
+        it.menuBackdropFps = menuBackdropFps
         it.notificationAppBackdrop = notificationAppBackdrop
         it.notificationBackdropFps = notificationBackdropFps
         it.glassIntensity = glassIntensity
@@ -240,13 +242,21 @@ fun GlassPlaygroundContent() {
                         menuBackdropEnabled = it
                         RootController.saveConfig(context, currentConfig()) { _, _ -> }
                     }
+                    if (menuBackdropEnabled) {
+                        PlaygroundSlider("桌面长按菜单静止采样：$menuBackdropFps FPS",
+                            { backdropFpsOptions.indexOf(menuBackdropFps).toFloat() },
+                            0f..5f, 0.01f, sheetBackdrop, steps = 4) {
+                            menuBackdropFps = backdropFpsOptions[it.toInt()]
+                        }
+                        BasicText("静止时减少背景采样；打开、关闭和几何变化仍及时更新。保存后重启系统组件生效")
+                    }
                     BasicText("关闭悬浮通知玻璃使用系统原样式；关闭菜单背景采样保留简单玻璃外观....保存后重启生效")
                     PlaygroundSlider("液态玻璃强度", { glassIntensity }, 0f..1f, 0.001f, sheetBackdrop) { glassIntensity = it }
                     PlaygroundSlider("模糊半径", { blurRadiusDp }, 0f..32f, 0.01f, sheetBackdrop) { blurRadiusDp = it }
                     PlaygroundSlider("音量条/悬浮通知背景更新：$volumeBackdropFps FPS",
-                        { volumeFpsOptions.indexOf(volumeBackdropFps).toFloat() },
+                        { backdropFpsOptions.indexOf(volumeBackdropFps).toFloat() },
                         0f..5f, 0.01f, sheetBackdrop, steps = 4) {
-                        volumeBackdropFps = volumeFpsOptions[it.toInt()]
+                        volumeBackdropFps = backdropFpsOptions[it.toInt()]
                     }
                     BasicText("只调整背景更新频率；低帧率更省资源，快速画面可能稍有滞后....保存后重启系统组件生效")
                     PlaygroundSlider("折射高度", { refractionHeightFrac }, 0f..1f, 0.001f, sheetBackdrop) { refractionHeightFrac = it }
