@@ -19,6 +19,7 @@ $kotlinArguments = @(
     ('"' + (Join-Path $PSScriptRoot 'OemNotificationContractProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'OpenFolderQueryProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'DesktopIconBitmapProbe.kt').Replace('\', '/') + '"'),
+    ('"' + (Join-Path $PSScriptRoot 'GitHubReleaseProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'launcher/ActivityContext.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'launcher/AbstractFloatingView.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'launcher/Folder.kt').Replace('\', '/') + '"'),
@@ -51,3 +52,5 @@ if ($LASTEXITCODE) { throw 'Notification and popup probe failed' }
 if ($LASTEXITCODE) { throw 'Open-folder query probe failed' }
 & $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.DesktopIconBitmapProbeKt'
 if ($LASTEXITCODE) { throw 'Desktop icon bitmap probe failed' }
+& $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.update.GitHubReleaseProbeKt'
+if ($LASTEXITCODE) { throw 'GitHub release probe failed' }
