@@ -232,7 +232,7 @@ fun GlassPlaygroundContent() {
                         menuBackdropEnabled = it
                         RootController.saveConfig(context, currentConfig()) { _, _ -> }
                     }
-                    BasicText("关闭悬浮通知玻璃使用系统原样式；关闭菜单背景采样保留简单玻璃外观。保存后重启生效。")
+                    BasicText("关闭悬浮通知玻璃使用系统原样式；关闭菜单背景采样保留简单玻璃外观....保存后重启生效")
                     PlaygroundSlider("液态玻璃强度", { glassIntensity }, 0f..1f, 0.001f, sheetBackdrop) { glassIntensity = it }
                     PlaygroundSlider("模糊半径", { blurRadiusDp }, 0f..32f, 0.01f, sheetBackdrop) { blurRadiusDp = it }
                     PlaygroundSlider("音量条/悬浮通知背景更新：$volumeBackdropFps FPS",
@@ -240,7 +240,7 @@ fun GlassPlaygroundContent() {
                         0f..5f, 0.01f, sheetBackdrop, steps = 4) {
                         volumeBackdropFps = volumeFpsOptions[it.toInt()]
                     }
-                    BasicText("只调整背景更新频率；低帧率更省资源，快速画面可能稍有滞后。保存后重启系统组件生效。")
+                    BasicText("只调整背景更新频率；低帧率更省资源，快速画面可能稍有滞后....保存后重启系统组件生效")
                     PlaygroundSlider("折射高度", { refractionHeightFrac }, 0f..1f, 0.001f, sheetBackdrop) { refractionHeightFrac = it }
                     PlaygroundSlider("扭曲强度", { refractionAmountFrac }, 0f..1f, 0.001f, sheetBackdrop) { refractionAmountFrac = it }
                     PlaygroundSlider("反射", { reflectionIntensity }, 0f..1f, 0.001f, sheetBackdrop) { reflectionIntensity = it }
