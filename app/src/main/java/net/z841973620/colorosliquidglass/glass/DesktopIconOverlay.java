@@ -139,8 +139,14 @@ final class DesktopIconOverlay {
                 painted++;
             }
         } else {
+            // Only modern Launcher popups: Cos14 must keep its proven software path.
+            PopupFolderBatch batch = popup && !canvas.isHardwareAccelerated()
+                    && ColorOsVersion.detect() == ColorOsVersion.Flavor.MODERN
+                    ? new PopupFolderBatch(glassHost.getWidth()) : null;
             painted = paintDesktopInto(anchor, canvas, globalToTarget, region, skipHost,
-                    skipIcons, null, popup);
+                    skipIcons, null, popup, batch);
+            // GPU failure keeps the existing capture caller's previous-frame/retry policy.
+            if (batch != null && !batch.paintInto(canvas)) return false;
         }
         boolean underPopup = false;
         if (popup) {
@@ -2340,11 +2346,18 @@ final class DesktopIconOverlay {
     private static int paintDesktopInto(View seed, Canvas canvas, Matrix globalToTarget,
             RectF region, View skipHost, java.util.HashSet<View> skipIcons,
             RectF openFolderCover, boolean menuGlass) {
+        return paintDesktopInto(seed, canvas, globalToTarget, region, skipHost,
+                skipIcons, openFolderCover, menuGlass, null);
+    }
+
+    private static int paintDesktopInto(View seed, Canvas canvas, Matrix globalToTarget,
+            RectF region, View skipHost, java.util.HashSet<View> skipIcons,
+            RectF openFolderCover, boolean menuGlass, PopupFolderBatch batch) {
         int painted = 0;
         List<ViewGroup> containers = iconContainersUnderRegion(seed, region);
         for (ViewGroup icons : containers) {
             painted += paintIconContainerInto(icons, canvas, globalToTarget, region, skipHost,
-                    skipIcons, openFolderCover, menuGlass);
+                    skipIcons, openFolderCover, menuGlass, batch);
         }
 
         View workspace = findWorkspaceAncestor(seed);
@@ -2355,7 +2368,12 @@ final class DesktopIconOverlay {
                 && pageIndicator.getWidth() > 0 && pageIndicator.getHeight() > 0
                 && intersectsRegion(region, pageIndicator)) {
             try {
-                paintDesktopChrome(pageIndicator, canvas, globalToTarget);
+                if (batch == null) paintDesktopChrome(pageIndicator, canvas, globalToTarget);
+                else batch.addSoftware(() -> {
+                    // The same OEM-draw boundary as the immediate path's surrounding catch.
+                    try { paintDesktopChrome(pageIndicator, canvas, globalToTarget); }
+                    catch (Throwable ignored) { }
+                });
                 painted++;
             } catch (Throwable ignored) { }
         }
@@ -2488,6 +2506,14 @@ final class DesktopIconOverlay {
     private static int paintIconContainerInto(ViewGroup icons, Canvas canvas,
             Matrix globalToTarget, RectF region, View skipHost,
             java.util.HashSet<View> skipIcons, RectF openFolderCover, boolean menuGlass) {
+        return paintIconContainerInto(icons, canvas, globalToTarget, region, skipHost,
+                skipIcons, openFolderCover, menuGlass, null);
+    }
+
+    private static int paintIconContainerInto(ViewGroup icons, Canvas canvas,
+            Matrix globalToTarget, RectF region, View skipHost,
+            java.util.HashSet<View> skipIcons, RectF openFolderCover, boolean menuGlass,
+            PopupFolderBatch batch) {
         if (icons == null) return 0;
         int painted = 0;
         for (int i = 0; i < icons.getChildCount(); i++) {
@@ -2514,24 +2540,33 @@ final class DesktopIconOverlay {
             try {
                 if (isFolderIcon(host) || isFolderIcon(child)) {
                     paintFolderIntoSample(isFolderIcon(host) ? host : child,
-                            canvas, globalToTarget, menuGlass);
-                    painted++;
-                } else if (isWidgetOrCard(host) || isWidgetOrCard(child)) {
-                    paintWidget(isWidgetOrCard(host) ? host : child,
-                            canvas, globalToTarget);
-                    painted++;
-                } else if (menuGlass && paintAppMenuComposite(child, host, canvas,
-                        globalToTarget)) {
+                            canvas, globalToTarget, menuGlass, batch);
                     painted++;
                 } else {
-                    paintAppIcon(host, canvas, globalToTarget);
-                    paintAppLabel(host, canvas, globalToTarget);
+                    if (batch == null) {
+                        paintNonFolderItem(child, host, canvas, globalToTarget, menuGlass);
+                    } else {
+                        batch.addSoftware(() -> paintNonFolderItem(child, host, canvas, globalToTarget, menuGlass));
+                    }
                     painted++;
                 }
             } catch (Throwable ignored) {
             }
         }
         return painted;
+    }
+
+    private static void paintNonFolderItem(View child, View host, Canvas canvas,
+            Matrix globalToTarget, boolean menuGlass) {
+        // OEM item draw methods are an external boundary, as in the unbatched loop.
+        try {
+            if (isWidgetOrCard(host) || isWidgetOrCard(child)) {
+                paintWidget(isWidgetOrCard(host) ? host : child, canvas, globalToTarget);
+            } else if (!menuGlass || !paintAppMenuComposite(child, host, canvas, globalToTarget)) {
+                paintAppIcon(host, canvas, globalToTarget);
+                paintAppLabel(host, canvas, globalToTarget);
+            }
+        } catch (Throwable ignored) { }
     }
 
     private static boolean isListedDragSource(View host, View child,
@@ -3011,6 +3046,11 @@ final class DesktopIconOverlay {
 
     private static void paintFolderIntoSample(View folderIcon, Canvas canvas,
             Matrix globalToTarget, boolean popupSample) {
+        paintFolderIntoSample(folderIcon, canvas, globalToTarget, popupSample, null);
+    }
+
+    private static void paintFolderIntoSample(View folderIcon, Canvas canvas,
+            Matrix globalToTarget, boolean popupSample, PopupFolderBatch batch) {
         // Accept/create delegated path: plate + shrunk glyphs are painted by
         // paintOneDelegatedPreview at CellLayout geometry. Skip resting FolderIcon composite
         // (would show full-size / unscaled preview icons).
@@ -3028,10 +3068,25 @@ final class DesktopIconOverlay {
         int w = folderIcon.getWidth();
         int h = folderIcon.getHeight();
         if (w <= 0 || h <= 0) return;
-        Bitmap composite = folderCompositeBitmap(folderIcon, w, h, true, popupSample);
-        if (composite == null || composite.isRecycled()) return;
         RectF dest = mapItemRectToTarget(folderIcon, new Rect(0, 0, w, h), globalToTarget);
         if (dest == null || dest.width() < 1f || dest.height() < 1f) return;
+        if (batch != null) {
+            View plateHost = resolveFolderPlateHost(folderIcon);
+            boolean liveGlass = plateHost != null && (GlassInstaller.get(plateHost) != null
+                    || plateHost.getBackground() instanceof GlassDrawable);
+            if (liveGlass && BackdropCapture.usesSharedWallpaper(plateHost)) {
+                batch.addFolder(w, h, dest,
+                        hardwareCanvas -> drawFolderComposite(folderIcon, plateHost, true, hardwareCanvas),
+                        bitmap -> retainFolderComposite(folderIcon, bitmap, null, true, w, h, true, true));
+            } else {
+                // Local-bitmap caches and temporarily removed OEM plates keep their original
+                // reuse/retention rules; only the always-live shared folders need GPU batching.
+                batch.addSoftware(() -> paintFolderIntoSample(folderIcon, canvas, globalToTarget, popupSample));
+            }
+            return;
+        }
+        Bitmap composite = folderCompositeBitmap(folderIcon, w, h, true, popupSample);
+        if (composite == null || composite.isRecycled()) return;
         BITMAP_PAINT.setAlpha(255);
         canvas.drawBitmap(composite, null, dest, BITMAP_PAINT);
     }
@@ -3219,7 +3274,13 @@ final class DesktopIconOverlay {
             glassReady = true;
         }
         if (rendered == null || rendered.isRecycled()) return null;
+        retainFolderComposite(folderIcon, rendered, plateSource, sharedLivePlate,
+                width, height, includeName, glassReady);
+        return rendered;
+    }
 
+    private static void retainFolderComposite(View folderIcon, Bitmap rendered, Bitmap plateSource,
+            boolean sharedLivePlate, int width, int height, boolean includeName, boolean glassReady) {
         FolderSnap snap = new FolderSnap();
         snap.bitmap = rendered;
         snap.plateSource = plateSource;
@@ -3235,36 +3296,41 @@ final class DesktopIconOverlay {
                 && !previous.bitmap.isRecycled()) {
             previous.bitmap.recycle();
         }
-        return rendered;
     }
 
     private static Bitmap hwFolderComposite(View folderIcon, View plateHost, int drawW, int drawH,
             boolean drawName) {
         try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("folder_composite")) {
-            return GlassHwRasterizer.render(drawW, drawH, hwCanvas -> {
-                DEPTH.set(DEPTH.get() + 1);
+            return GlassHwRasterizer.render(drawW, drawH,
+                    hwCanvas -> drawFolderComposite(folderIcon, plateHost, drawName, hwCanvas));
+        }
+    }
+
+    private static void drawFolderComposite(View folderIcon, View plateHost,
+            boolean drawName, Canvas hwCanvas) {
+        try (PopupCaptureTrace.Stage ignoredTrace = PopupCaptureTrace.section("folder_record")) {
+            DEPTH.set(DEPTH.get() + 1);
+            try {
+                int dx = 0;
+                int dy = 0;
+                if (!drawName && plateHost != null) {
+                    dx = -plateHost.getLeft();
+                    dy = -plateHost.getTop();
+                }
+                int save = hwCanvas.save();
+                hwCanvas.translate(dx, dy);
                 try {
-                    int dx = 0;
-                    int dy = 0;
-                    if (!drawName && plateHost != null) {
-                        dx = -plateHost.getLeft();
-                        dy = -plateHost.getTop();
-                    }
-                    int save = hwCanvas.save();
-                    hwCanvas.translate(dx, dy);
-                    try {
-                        drawFolderPlate(folderIcon, hwCanvas);
-                        paintFolderPreviewBitmaps(folderIcon, hwCanvas);
-                        if (drawName) {
-                            paintFolderName(folderIcon, hwCanvas);
-                        }
-                    } finally {
-                        hwCanvas.restoreToCount(save);
+                    drawFolderPlate(folderIcon, hwCanvas);
+                    paintFolderPreviewBitmaps(folderIcon, hwCanvas);
+                    if (drawName) {
+                        paintFolderName(folderIcon, hwCanvas);
                     }
                 } finally {
-                    DEPTH.set(Math.max(0, DEPTH.get() - 1));
+                    hwCanvas.restoreToCount(save);
                 }
-            });
+            } finally {
+                DEPTH.set(Math.max(0, DEPTH.get() - 1));
+            }
         }
     }
 
