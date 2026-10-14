@@ -46,6 +46,7 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.RoundedRectangle
 import kotlinx.coroutines.launch
+import net.z841973620.colorosliquidglass.update.GitHubUpdateCard
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -246,6 +247,7 @@ fun GlassPlaygroundContent() {
                     PlaygroundSlider("反射", { reflectionIntensity }, 0f..1f, 0.001f, sheetBackdrop) { reflectionIntensity = it }
                     PlaygroundSlider("高光", { highlightIntensity }, 0f..1f, 0.001f, sheetBackdrop) { highlightIntensity = it }
                     PlaygroundSlider("色差", { chromaticAberration }, 0f..1f, 0.001f, sheetBackdrop) { chromaticAberration = it }
+                    GitHubUpdateCard(sheetBackdrop)
                 }
             }
         }
