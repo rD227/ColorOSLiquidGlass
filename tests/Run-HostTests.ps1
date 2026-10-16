@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $projectDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path.Replace('\', '/')
 $outputDir = "$projectDir/app/build/host-tests"
 $appClasses = "$projectDir/app/build/intermediates/javac/release/compileReleaseJavaWithJavac/classes"
-$androidJar = "$env:ANDROID_HOME/platforms/android-35/android.jar"
+$androidJar = ("$env:ANDROID_HOME/platforms/android-35/android.jar").Replace('\', '/')
 $testJar = "$outputDir/host-tests.jar"
 New-Item -ItemType Directory -Force $outputDir | Out-Null
 $sources = @(
