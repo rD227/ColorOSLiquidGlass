@@ -102,17 +102,30 @@ public final class DesktopBackdropClient {
         }
         synchronized (LOCK) {
             if (!ensureArenaLocked()) return false;
-            sessionRefs++;
-            if (sessionRefs == 1) {
-                sessionCrop.set(menuOnScreen);
-                arena.publishSession(menuOnScreen.left, menuOnScreen.top,
-                        menuOnScreen.right, menuOnScreen.bottom,
-                        SharedFrameArena.FLAG_LIVE);
-                Log.i(TAG, "signalOpen LIVE region " + menuOnScreen.toShortString());
-            } else {
-                updateMenuRectLocked(menuOnScreen);
-            }
+            openLocked(menuOnScreen);
             return true;
+        }
+    }
+
+    /** Acquire a ready session and its generation in one transaction; never handshake here. */
+    public static int tryOpenSession(Rect crop, int expectedEpoch) {
+        synchronized (LOCK) {
+            if (arena == null || sessionEpoch != expectedEpoch) return -1;
+            openLocked(crop);
+            return sessionEpoch;
+        }
+    }
+
+    private static void openLocked(Rect menuOnScreen) {
+        sessionRefs++;
+        if (sessionRefs == 1) {
+            sessionCrop.set(menuOnScreen);
+            arena.publishSession(menuOnScreen.left, menuOnScreen.top,
+                    menuOnScreen.right, menuOnScreen.bottom,
+                    SharedFrameArena.FLAG_LIVE);
+            Log.i(TAG, "signalOpen LIVE region " + menuOnScreen.toShortString());
+        } else {
+            updateMenuRectLocked(menuOnScreen);
         }
     }
 
@@ -136,24 +149,35 @@ public final class DesktopBackdropClient {
 
     public static void signalClose() {
         synchronized (LOCK) {
-            if (arena == null) {
-                sessionRefs = 0;
-                sessionCrop.setEmpty();
-                sessionEpoch++;
-                return;
+            closeLocked();
+        }
+    }
+
+    /** An invalidated reference cannot decrement references acquired by a newer session. */
+    public static void closeSession(int acquiredEpoch) {
+        synchronized (LOCK) {
+            if (acquiredEpoch == sessionEpoch) closeLocked();
+        }
+    }
+
+    private static void closeLocked() {
+        if (arena == null) {
+            sessionRefs = 0;
+            sessionCrop.setEmpty();
+            sessionEpoch++;
+            return;
+        }
+        if (sessionRefs > 0) sessionRefs--;
+        if (sessionRefs == 0) {
+            sessionEpoch++;
+            arena.publishSession(SharedFrameArena.FLAG_STOP);
+            Log.i(TAG, "signalClose STOP epoch=" + sessionEpoch);
+            if (reusable != null && !reusable.isRecycled()) {
+                try { reusable.recycle(); } catch (Throwable ignored) { }
             }
-            if (sessionRefs > 0) sessionRefs--;
-            if (sessionRefs == 0) {
-                sessionEpoch++;
-                arena.publishSession(SharedFrameArena.FLAG_STOP);
-                Log.i(TAG, "signalClose STOP epoch=" + sessionEpoch);
-                if (reusable != null && !reusable.isRecycled()) {
-                    try { reusable.recycle(); } catch (Throwable ignored) { }
-                }
-                reusable = null;
-                lastSeenFrameSeq = 0;
-                sessionCrop.setEmpty();
-            }
+            reusable = null;
+            lastSeenFrameSeq = 0;
+            sessionCrop.setEmpty();
         }
     }
 

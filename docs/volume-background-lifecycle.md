@@ -49,3 +49,13 @@
 安装记录现在是 View → 弱引用 dialog。清理消失的 View 以及 release 都只处理该 dialog
 拥有的记录；若 View 已交给新 dialog，旧 dialog 不再有权卸载它。逐个卸载宿主本身
 已经关闭对应的采样，因此删除 release 中无条件的 stopVolumeSessions 调用。
+
+### 原子取得与按代际释放
+
+`tryOpenSession(crop, expectedEpoch)` 在客户端同一把锁内检查代际、取得 LIVE 引用并
+返回取得时的 epoch。`closeSession(acquiredEpoch)` 只释放相同代际的引用。
+宿主重新绘制时也会识别已失效的旧代际，重新取得引用。
+
+不能在所有 epoch 变化后直接调用无参数 signalClose：强制关闭本来就会清零旧代际的
+计数；此时再减一次，可能扣掉其他宿主新取得的引用。如果 epoch 在读取与取得之间变化，
+旧实现又可能取得新代际引用却丢弃其所有权。原子取得消除了这两种含糊状态。

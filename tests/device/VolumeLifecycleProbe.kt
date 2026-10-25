@@ -80,10 +80,21 @@ fun main() {
             "Old dialog dismissal removed the new dialog's host/session"
         }
 
+        val oldEpoch = DesktopBackdropClient.sessionEpoch()
+        DesktopBackdropClient.forceCloseSession()
+        val newEpoch = DesktopBackdropClient.sessionEpoch()
+        check(DesktopBackdropClient.tryOpenSession(menuRegion, oldEpoch) == -1)
+        check(refs.getInt(null) == 0)
+        check(DesktopBackdropClient.tryOpenSession(menuRegion, newEpoch) == newEpoch)
+        DesktopBackdropClient.closeSession(oldEpoch)
+        check(refs.getInt(null) == 1) { "Stale close stole the new generation's reference" }
+        DesktopBackdropClient.closeSession(newEpoch)
+        check(refs.getInt(null) == 0)
+        // The host still owns the invalidated epoch; release must not affect another owner.
         BehindDisplayCapture.stopStreaming(host)
         check(refs.getInt(null) == 0 && !opened.getBoolean(state))
         installed.clear()
-        println("PASS: late old-dialog dismissal preserves the new dialog session")
+        println("PASS: late old-dialog dismissal and atomic epoch-scoped acquisition/release")
     } finally {
         arenaField.set(null, null)
         arena.close()

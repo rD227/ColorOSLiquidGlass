@@ -270,7 +270,11 @@ public final class BehindDisplayCapture {
     }
 
     private static void openSessionIfNeeded(View host, HostState s) {
-        if (s == null || s.sessionOpen) return;
+        if (s == null) return;
+        int epoch = DesktopBackdropClient.sessionEpoch();
+        if (s.sessionOpen && s.openEpoch == epoch) return;
+        s.sessionOpen = false;
+        s.openEpoch = -1;
         if (host != null && !host.isAttachedToWindow()) {
             Log.w(TAG, "DESKTOP open skipped — host detached");
             return;
@@ -279,24 +283,17 @@ public final class BehindDisplayCapture {
             Log.w(TAG, "DESKTOP open skipped — empty menuRegion");
             return;
         }
-        int epoch = DesktopBackdropClient.sessionEpoch();
         // bindDesktop already warms the connection in the background. A pending/failed
         // handshake must not claim an OPEN reference or block the UI thread reconnecting.
-        if (!DesktopBackdropClient.isReady()) return;
-        if (!DesktopBackdropClient.trySignalOpen(s.menuRegion)) return;
-        if (DesktopBackdropClient.sessionEpoch() != epoch) {
-            Log.i(TAG, "DESKTOP open aborted — session epoch advanced during signalOpen");
-            s.sessionOpen = false;
-            s.openEpoch = -1;
-            return;
-        }
+        int acquiredEpoch = DesktopBackdropClient.tryOpenSession(s.menuRegion, epoch);
+        if (acquiredEpoch < 0) return;
         s.sessionOpen = true;
-        s.openEpoch = epoch;
+        s.openEpoch = acquiredEpoch;
     }
 
     private static void closeSessionIfNeeded(HostState s) {
         if (s == null || !s.sessionOpen) return;
-        DesktopBackdropClient.signalClose();
+        DesktopBackdropClient.closeSession(s.openEpoch);
         s.sessionOpen = false;
         s.openEpoch = -1;
     }
@@ -414,17 +411,14 @@ public final class BehindDisplayCapture {
                 if (union == null || union.isEmpty()) union = sampleRect;
                 s.menuRegion.set(union);
                 syncVolumeDesktopMenuRegion(union);
-                if (!s.sessionOpen) openSessionIfNeeded(host, s);
-                else DesktopBackdropClient.updateMenuRect(union);
+                openSessionIfNeeded(host, s);
+                if (s.sessionOpen) DesktopBackdropClient.updateMenuRect(union);
             } else if (s.pinMenuRegion) {
-                if (!s.sessionOpen) openSessionIfNeeded(host, s);
+                openSessionIfNeeded(host, s);
             } else if (!sampleRect.isEmpty()) {
                 s.menuRegion.set(sampleRect);
-                if (!s.sessionOpen) {
-                    openSessionIfNeeded(host, s);
-                } else {
-                    DesktopBackdropClient.updateMenuRect(sampleRect);
-                }
+                openSessionIfNeeded(host, s);
+                if (s.sessionOpen) DesktopBackdropClient.updateMenuRect(sampleRect);
             } else {
                 openSessionIfNeeded(host, s);
             }
