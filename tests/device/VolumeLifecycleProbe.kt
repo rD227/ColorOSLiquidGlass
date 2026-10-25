@@ -8,6 +8,7 @@ import android.view.View
 import net.z841973620.colorosliquidglass.GlassConfig
 import net.z841973620.colorosliquidglass.ipc.DesktopBackdropClient
 import net.z841973620.colorosliquidglass.ipc.SharedFrameArena
+import java.lang.ref.WeakReference
 
 /** Synthetic lifecycle transitions; does not manipulate the real volume dialog or audio devices. */
 fun main() {
@@ -68,8 +69,21 @@ fun main() {
         check(refs.getInt(null) == 1)
         open.invoke(null, host, state)
         check(refs.getInt(null) == 1) { "Repeated binding acquired a duplicate LIVE reference" }
+        val ownerB = Any()
+        @Suppress("UNCHECKED_CAST")
+        val installed = type.getDeclaredField("INSTALLED").apply { isAccessible = true }
+            .get(null) as MutableMap<View, WeakReference<Any>>
+        installed[host] = WeakReference(ownerB)
+        BehindDisplayCapture.tagVolumeHost(host)
+        VolumePanelGlass.release(dialog)
+        check(installed[host]?.get() === ownerB && refs.getInt(null) == 1) {
+            "Old dialog dismissal removed the new dialog's host/session"
+        }
+
         BehindDisplayCapture.stopStreaming(host)
         check(refs.getInt(null) == 0 && !opened.getBoolean(state))
+        installed.clear()
+        println("PASS: late old-dialog dismissal preserves the new dialog session")
     } finally {
         arenaField.set(null, null)
         arena.close()

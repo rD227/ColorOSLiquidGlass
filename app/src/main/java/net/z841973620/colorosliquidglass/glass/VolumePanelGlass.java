@@ -20,6 +20,7 @@ import net.z841973620.colorosliquidglass.GlassConfig;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -43,8 +44,7 @@ public final class VolumePanelGlass {
     private static final String TAG = "ColorOSLiquidGlass";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final ColorDrawable TRANSPARENT = new ColorDrawable(Color.TRANSPARENT);
-    private static final Set<View> INSTALLED =
-            java.util.Collections.newSetFromMap(new WeakHashMap<>());
+    private static final Map<View, WeakReference<Object>> INSTALLED = new WeakHashMap<>();
     /** Main-thread callbacks owned by the dialog that requested them. */
     private static final Map<Object, Runnable> PENDING_APPLIES = new IdentityHashMap<>();
     private static final long[] APPLY_DELAYS_MS = {0L, 32L, 120L, 280L, 520L};
@@ -75,8 +75,9 @@ public final class VolumePanelGlass {
         Set<View> keep = new HashSet<>(hosts);
         ArrayList<View> stale = new ArrayList<>();
         synchronized (INSTALLED) {
-            for (View v : INSTALLED) {
-                if (v != null && !keep.contains(v)) stale.add(v);
+            for (Map.Entry<View, WeakReference<Object>> entry : INSTALLED.entrySet()) {
+                View v = entry.getKey();
+                if (entry.getValue().get() == dialogView && !keep.contains(v)) stale.add(v);
             }
         }
         for (View v : stale) {
@@ -96,13 +97,15 @@ public final class VolumePanelGlass {
         cancelPendingApply(dialogView);
         ArrayList<View> hosts;
         synchronized (INSTALLED) {
-            hosts = new ArrayList<>(INSTALLED);
-            INSTALLED.clear();
+            hosts = new ArrayList<>();
+            for (Map.Entry<View, WeakReference<Object>> entry : INSTALLED.entrySet()) {
+                if (entry.getValue().get() == dialogView) hosts.add(entry.getKey());
+            }
+            for (View host : hosts) INSTALLED.remove(host);
         }
         for (View host : hosts) {
             GlassInstaller.uninstall(host);
         }
-        BehindDisplayCapture.stopVolumeSessions();
         if (dialogView != null) {
             ViewGroup root = asViewGroup(field(dialogView, "mDialogView"));
             if (root != null) {
@@ -212,7 +215,7 @@ public final class VolumePanelGlass {
         }
 
         synchronized (INSTALLED) {
-            INSTALLED.add(host);
+            INSTALLED.put(host, new WeakReference<>(dialogView));
         }
     }
 
