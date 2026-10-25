@@ -8,7 +8,9 @@ import android.view.View
 import net.z841973620.colorosliquidglass.GlassConfig
 import net.z841973620.colorosliquidglass.ipc.DesktopBackdropClient
 import net.z841973620.colorosliquidglass.ipc.SharedFrameArena
+import net.z841973620.colorosliquidglass.ipc.DesktopBackdropHub
 import java.lang.ref.WeakReference
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Synthetic lifecycle transitions; does not manipulate the real volume dialog or audio devices. */
 fun main() {
@@ -69,6 +71,7 @@ fun main() {
         check(refs.getInt(null) == 1)
         open.invoke(null, host, state)
         check(refs.getInt(null) == 1) { "Repeated binding acquired a duplicate LIVE reference" }
+
         val ownerB = Any()
         @Suppress("UNCHECKED_CAST")
         val installed = type.getDeclaredField("INSTALLED").apply { isAccessible = true }
@@ -95,6 +98,29 @@ fun main() {
         check(refs.getInt(null) == 0 && !opened.getBoolean(state))
         installed.clear()
         println("PASS: late old-dialog dismissal and atomic epoch-scoped acquisition/release")
+
+        val hub = DesktopBackdropHub::class.java
+        val producerArena = hub.getDeclaredField("arena").apply { isAccessible = true }
+        producerArena.set(null, arena)
+        val busy = hub.getDeclaredField("publishBusyIdx").apply { isAccessible = true }
+            .get(null) as AtomicInteger
+        val applySession = hub.getDeclaredMethod("applySession", SharedFrameArena::class.java,
+            Int::class.javaPrimitiveType, Rect::class.java).apply { isAccessible = true }
+        val finishRelease = hub.getDeclaredMethod("releasePlatesOnMain").apply { isAccessible = true }
+        val crop = Rect(10, 20, 42, 84)
+        applySession.invoke(null, arena, SharedFrameArena.FLAG_LIVE, crop)
+        busy.set(0) // Hold a frame in the publisher while STOP is processed.
+        applySession.invoke(null, arena, SharedFrameArena.FLAG_STOP, Rect())
+        check(busy.get() == 0) { "STOP forgot the publisher's borrowed buffer" }
+        applySession.invoke(null, arena, SharedFrameArena.FLAG_LIVE, crop)
+        busy.set(-1)
+        finishRelease.invoke(null) // Deliver the old completion after the new LIVE.
+        check(DesktopBackdropSampler.liveCrop() == crop) { "Stale cleanup erased the new crop" }
+        applySession.invoke(null, arena, SharedFrameArena.FLAG_STOP, Rect())
+        check(DesktopBackdropSampler.liveCrop().isEmpty)
+        producerArena.set(null, null)
+        DesktopBackdropHub.stop()
+        println("PASS: busy publisher STOP -> same-crop LIVE -> old cleanup retains the new crop")
     } finally {
         arenaField.set(null, null)
         arena.close()

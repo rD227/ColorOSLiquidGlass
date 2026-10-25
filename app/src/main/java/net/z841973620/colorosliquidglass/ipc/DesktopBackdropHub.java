@@ -45,6 +45,9 @@ public final class DesktopBackdropHub {
 
     private static Bitmap latestPlate;
     private static int latestIdx = -1;
+    /** Owned by MAIN, with publisher completion coordinated under LATEST_LOCK. */
+    private static boolean releasePending;
+    private static final Runnable RELEASE_PLATES = DesktopBackdropHub::releasePlatesOnMain;
 
     private static final Choreographer.FrameCallback FRAME_CB = frameTimeNanos -> {
         frameCallbackPosted.set(false);
@@ -116,9 +119,10 @@ public final class DesktopBackdropHub {
             latestPlate = null;
             latestIdx = -1;
         }
-        publishBusyIdx.set(-1);
-        liveCrop.setEmpty();
-        releasePlatesWhenIdle();
+        MAIN.post(() -> {
+            liveCrop.setEmpty();
+            releasePlatesWhenIdle();
+        });
     }
 
     public static boolean isLive() {
@@ -215,15 +219,19 @@ public final class DesktopBackdropHub {
             }
             int req = ar.reqSeq();
             if (req != 0 && req != lastServicedReq.get()) {
-                applySession(ar, req);
+                int flags = ar.reqFlags();
+                Rect crop = new Rect();
+                ar.readRequest(crop);
+                lastServicedReq.set(req);
+                MAIN.post(() -> applySession(ar, flags, crop));
             }
-            ar.waitForRequest(ar.reqSeq(), WAIT_NS);
+            ar.waitForRequest(lastServicedReq.get(), WAIT_NS);
         }
     }
 
-    private static void applySession(SharedFrameArena ar, int req) {
-        int flags = ar.reqFlags();
-        lastServicedReq.set(req);
+    private static void applySession(SharedFrameArena ar, int flags, Rect crop) {
+        // Requests already queued on MAIN belong to the arena that supplied them.
+        if (ar != arena) return;
         if ((flags & SharedFrameArena.FLAG_STOP) != 0) {
             // Always tear down publish — even if live was already false (stale callbacks).
             live.set(false);
@@ -234,24 +242,25 @@ public final class DesktopBackdropHub {
                 latestPlate = null;
                 latestIdx = -1;
             }
-            publishBusyIdx.set(-1);
             lastPublishedGen.set(Integer.MIN_VALUE);
             liveCrop.setEmpty();
-            MAIN.post(() -> DesktopBackdropSampler.setLiveCrop(new Rect()));
+            DesktopBackdropSampler.setLiveCrop(new Rect());
             releasePlatesWhenIdle();
             Log.i(TAG, "session STOP — halt region publish");
             return;
         }
         if ((flags & SharedFrameArena.FLAG_LIVE) != 0) {
-            Rect crop = new Rect();
-            ar.readRequest(crop);
             if (crop.isEmpty()) {
                 Log.w(TAG, "LIVE without menu crop — ignored");
                 return;
             }
+            synchronized (LATEST_LOCK) {
+                releasePending = false;
+            }
+            MAIN.removeCallbacks(RELEASE_PLATES);
             liveCrop.set(crop);
             lastPublishedGen.set(Integer.MIN_VALUE);
-            MAIN.post(() -> DesktopBackdropSampler.setLiveCrop(crop));
+            DesktopBackdropSampler.setLiveCrop(crop);
             if (!live.getAndSet(true)) {
                 Log.i(TAG, "session LIVE — region " + crop.width() + "x" + crop.height()
                         + " @ " + crop.toShortString());
@@ -262,16 +271,18 @@ public final class DesktopBackdropHub {
     }
 
     private static void releasePlatesWhenIdle() {
-        MAIN.post(new Runnable() {
-            int tries;
-            @Override public void run() {
-                if (publishBusyIdx.get() >= 0 && tries++ < 30) {
-                    MAIN.postDelayed(this, 16);
-                    return;
-                }
-                DesktopBackdropSampler.releaseLiveBuffers();
-            }
-        });
+        synchronized (LATEST_LOCK) {
+            releasePending = true;
+        }
+        releasePlatesOnMain();
+    }
+
+    private static void releasePlatesOnMain() {
+        synchronized (LATEST_LOCK) {
+            if (!releasePending || publishBusyIdx.get() >= 0) return;
+            releasePending = false;
+            DesktopBackdropSampler.releaseLiveBuffers();
+        }
     }
 
     private static void postFrameCallback() {
@@ -321,7 +332,7 @@ public final class DesktopBackdropHub {
 
     private static void drainPublish(SharedFrameArena ar) {
         try {
-            while (STARTED.get() && live.get()) {
+            while (STARTED.get() && live.get() && ar == arena) {
                 Bitmap plate;
                 int idx;
                 synchronized (LATEST_LOCK) {
@@ -329,13 +340,18 @@ public final class DesktopBackdropHub {
                     idx = latestIdx;
                     latestPlate = null;
                     latestIdx = -1;
+                    if (plate != null && !plate.isRecycled() && idx >= 0) {
+                        publishBusyIdx.set(idx);
+                    }
                 }
                 if (plate == null || plate.isRecycled() || idx < 0) break;
-                publishBusyIdx.set(idx);
                 try {
                     ar.publishBitmap(plate);
                 } finally {
-                    publishBusyIdx.set(-1);
+                    synchronized (LATEST_LOCK) {
+                        publishBusyIdx.set(-1);
+                        if (releasePending) MAIN.post(RELEASE_PLATES);
+                    }
                 }
             }
         } catch (Throwable t) {
@@ -346,7 +362,7 @@ public final class DesktopBackdropHub {
             synchronized (LATEST_LOCK) {
                 hasLatest = latestPlate != null;
             }
-            if (hasLatest && STARTED.get() && live.get()) {
+            if (hasLatest && STARTED.get() && live.get() && ar == arena) {
                 schedulePublish(ar);
             }
         }
