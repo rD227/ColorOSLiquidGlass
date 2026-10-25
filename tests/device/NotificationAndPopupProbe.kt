@@ -32,7 +32,7 @@ private fun checkFolderHardwareComposite(context: Context, root: FrameLayout) {
     val captures = BackdropCapture::class.java.getDeclaredField("CAPTURES").apply { isAccessible = true }.get(null) as Map<*, *>
     val capture = captures[plate] as BackdropCapture
     check(capture.usesSharedWallpaper())
-    val composite = DesktopIconOverlay::class.java.getDeclaredMethod(
+    val composite = FolderCompositeRenderer::class.java.getDeclaredMethod(
         "folderCompositeBitmap", View::class.java, Int::class.javaPrimitiveType,
         Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType
     ).apply { isAccessible = true }
@@ -80,7 +80,7 @@ private fun checkCaptureTrace(host: View) {
         }
     }
     // Exercise the real reflection query: a successful null result differs from API failure.
-    val query = DesktopIconOverlay::class.java.getDeclaredMethod(
+    val query = OpenFolderOverlay::class.java.getDeclaredMethod(
         "invokeOpenFolder", Any::class.java, ClassLoader::class.java, String::class.java, String::class.java
     ).apply { isAccessible = true }
     val fixture = OpenFolderQueryFixture::class.java

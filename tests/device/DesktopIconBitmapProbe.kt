@@ -69,9 +69,9 @@ fun main() {
     cache.clear()
     check(!metadataUpdate.isRecycled && !red.isRecycled)
 
-    val select = DesktopIconOverlay::class.java.getDeclaredMethod("bitmapForCanvas", Bitmap::class.java, Canvas::class.java)
+    val select = DesktopItemRenderer::class.java.getDeclaredMethod("bitmapForCanvas", Bitmap::class.java, Canvas::class.java)
         .apply { isAccessible = true }
-    val preview = DesktopIconOverlay::class.java.getDeclaredMethod("paintFolderPreviewBitmaps", View::class.java, Canvas::class.java)
+    val preview = FolderCompositeRenderer::class.java.getDeclaredMethod("paintFolderPreviewBitmaps", View::class.java, Canvas::class.java)
         .apply { isAccessible = true }
     val host = PreviewHost(context, red)
     val gpu = GpuBackdropTexture.render(32, 32, 0f) { canvas ->
@@ -86,7 +86,7 @@ fun main() {
     check(Color.red(output.getPixel(16, 16)) > 240) { "Software folder-preview fallback was lost" }
     val borrowed = select.invoke(null, red, canvas) as Bitmap
     check(select.invoke(null, red, canvas) === borrowed)
-    val fresh = DesktopIconOverlay::class.java.getDeclaredMethod("softwareBitmap", Bitmap::class.java)
+    val fresh = DesktopItemRenderer::class.java.getDeclaredMethod("softwareBitmap", Bitmap::class.java)
         .apply { isAccessible = true }
     val temporary = fresh.invoke(null, red) as Bitmap
     check(temporary !== borrowed) { "Pixel-inspection caller was given a shared copy it may recycle" }

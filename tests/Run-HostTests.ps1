@@ -6,10 +6,13 @@ $androidJar = ("$env:ANDROID_HOME/platforms/android-35/android.jar").Replace('\'
 $testJar = "$outputDir/host-tests.jar"
 New-Item -ItemType Directory -Force $outputDir | Out-Null
 $sources = @(
+    'app/src/main/java/net/z841973620/colorosliquidglass/config/CaptureRates.kt',
     'app/src/main/java/net/z841973620/colorosliquidglass/glass/CaptureCadence.kt',
     'app/src/main/java/net/z841973620/colorosliquidglass/glass/PopupCaptureCadence.kt',
     'tests/PopupCaptureCadenceTest.kt',
-    'tests/MenuBackdropConfigTest.kt'
+    'tests/MenuBackdropConfigTest.kt',
+    'tests/NotificationCaptureCadenceTest.kt',
+    'tests/host/VolumeConfigProbe.kt'
 )
 $compilerArguments = @($sources | ForEach-Object { '"' + "$projectDir/$_" + '"' }) + @(
     '-classpath', ('"' + "$androidJar;$appClasses" + '"'),
@@ -21,7 +24,9 @@ Set-Content -LiteralPath $argumentFile -Value $compilerArguments -Encoding utf8
 if ($LASTEXITCODE) { throw 'Host test compilation failed; assembleRelease first' }
 foreach ($entryPoint in @(
     'net.z841973620.colorosliquidglass.glass.PopupCaptureCadenceTestKt',
-    'net.z841973620.colorosliquidglass.MenuBackdropConfigTestKt'
+    'net.z841973620.colorosliquidglass.MenuBackdropConfigTestKt',
+    'net.z841973620.colorosliquidglass.glass.NotificationCaptureCadenceTestKt',
+    'VolumeConfigProbeKt'
 )) {
     & "$env:JAVA_HOME/bin/java.exe" -cp "$testJar;$androidJar;$appClasses" $entryPoint
     if ($LASTEXITCODE) { throw "$entryPoint failed" }

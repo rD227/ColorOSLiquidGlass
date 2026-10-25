@@ -1,3 +1,5 @@
+param([switch]$CompileOnly)
+
 $ErrorActionPreference = 'Stop'
 $projectDir = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $probeDir = Join-Path $projectDir 'app/build/shared-wallpaper-probe'
@@ -13,6 +15,7 @@ $sources = $probeNames | ForEach-Object { Join-Path $PSScriptRoot "${_}.java" }
     -cp "$androidJar;$appClasses" -d $probeDir $sources
 if ($LASTEXITCODE) { throw 'Probe compilation failed; build assembleRelease first' }
 $kotlinArguments = @(
+    ('"' + (Join-Path $PSScriptRoot 'VolumeLifecycleProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'ExpandableNotificationRow.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'HeadsUpRouteProbe.kt').Replace('\', '/') + '"'),
     ('"' + (Join-Path $PSScriptRoot 'NotificationRefractionProbe.kt').Replace('\', '/') + '"'),
@@ -40,10 +43,16 @@ $classes = Get-ChildItem $probeDir -Recurse -Filter '*.class' | ForEach-Object F
 & "$env:JAVA_HOME/bin/java.exe" -cp "$env:ANDROID_HOME/build-tools/35.0.0/lib/d8.jar" `
     com.android.tools.r8.D8 --lib $androidJar --classpath $appClasses --classpath $kotlinClasses --output $probeDir $classes
 if ($LASTEXITCODE) { throw 'DEX compilation failed' }
+if ($CompileOnly) {
+    Write-Output 'PASS: device probes compiled and converted to DEX (no device required)'
+    return
+}
 & $adb push $apk /data/local/tmp/colg-probe-app.apk
 if ($LASTEXITCODE) { throw 'APK upload failed' }
 & $adb push "$probeDir/classes.dex" /data/local/tmp/colg-shared-probe.dex
 if ($LASTEXITCODE) { throw 'Probe upload failed' }
+& $adb shell 'CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.VolumeLifecycleProbeKt'
+if ($LASTEXITCODE) { throw 'Volume lifecycle probe failed' }
 foreach ($name in $probeNames) {
     & $adb shell "CLASSPATH=/data/local/tmp/colg-probe-app.apk:/data/local/tmp/colg-shared-probe.dex app_process /system/bin net.z841973620.colorosliquidglass.glass.$name"
     if ($LASTEXITCODE) { throw "$name failed" }

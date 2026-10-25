@@ -280,7 +280,10 @@ public final class BehindDisplayCapture {
             return;
         }
         int epoch = DesktopBackdropClient.sessionEpoch();
-        DesktopBackdropClient.signalOpen(s.menuRegion);
+        // bindDesktop already warms the connection in the background. A pending/failed
+        // handshake must not claim an OPEN reference or block the UI thread reconnecting.
+        if (!DesktopBackdropClient.isReady()) return;
+        if (!DesktopBackdropClient.trySignalOpen(s.menuRegion)) return;
         if (DesktopBackdropClient.sessionEpoch() != epoch) {
             Log.i(TAG, "DESKTOP open aborted — session epoch advanced during signalOpen");
             s.sessionOpen = false;
@@ -372,7 +375,10 @@ public final class BehindDisplayCapture {
             fps = s.shadeFps;
             blurPx = s.shadeBlurPx;
         }
-        boolean immediate = s.forceOnce || s.cache == null;
+        // Zero-Hz shade sessions consume one task, not one successful bitmap. Cache absence
+        // must not force another capture on every draw while the worker runs (or after failure).
+        boolean captureOnlyOnOpen = s.notificationShade && fps == 0;
+        boolean immediate = s.forceOnce || (s.cache == null && !captureOnlyOnOpen);
         if (paced && !s.cadence.isDue(nowNanos, immediate)) return;
         Rect sampleRect = volume
                 ? volumeGlassScreenRect(host)
@@ -462,6 +468,10 @@ public final class BehindDisplayCapture {
         WORKER.execute(() -> {
             if (!s.streaming || s.captureEpoch != req.epoch) {
                 s.capturing.set(false);
+                // A reopened zero-Hz shade has no timer to wake after this old task exits.
+                MAIN.post(() -> {
+                    if (s.notificationShade && s.streaming && host.isAttachedToWindow()) host.invalidate();
+                });
                 return;
             }
             Bitmap shot = null;
@@ -475,6 +485,7 @@ public final class BehindDisplayCapture {
                 if (!s.streaming || s.captureEpoch != req.epoch || !host.isAttachedToWindow()) {
                     recycleQuiet(frame);
                     s.capturing.set(false);
+                    if (s.notificationShade && s.streaming && host.isAttachedToWindow()) host.invalidate();
                     return;
                 }
                 if (frame != null && !frame.isRecycled()) {

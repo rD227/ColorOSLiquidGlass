@@ -2,6 +2,7 @@ package net.z841973620.colorosliquidglass;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import net.z841973620.colorosliquidglass.config.CaptureRates;
 
 public final class GlassConfig {
     public static final String PREFS = "config";
@@ -10,12 +11,12 @@ public final class GlassConfig {
     /** Long-press / Overview / float app-option menus use LiquidGlass when true. */
     public boolean modifyMenuStyle = true;
     public boolean notificationGlassEnabled = true;
-    public int volumeBackdropFps = 30;
+    public int volumeBackdropFps = CaptureRates.DEFAULT_VOLUME;
     public boolean headsUpGlassEnabled = true;
     public boolean menuBackdropEnabled = true;
-    public int menuBackdropFps = 1;
+    public int menuBackdropFps = CaptureRates.DEFAULT_MENU;
     public boolean notificationAppBackdrop = false;
-    public int notificationBackdropFps = 5;
+    public int notificationBackdropFps = CaptureRates.DEFAULT_NOTIFICATION;
     public float glassIntensity = 1f;
     public float blurRadius = 0f;
     public float refractionHeight = .2f;
@@ -31,21 +32,15 @@ public final class GlassConfig {
         c.hideDesktopIcons = p.getBoolean("hide_desktop_icons", false);
         c.modifyMenuStyle = p.getBoolean("modify_menu_style", true);
         c.notificationGlassEnabled = p.getBoolean("notification_glass_enabled", true);
-        int fps = p.getInt("volume_backdrop_fps", 30);
-        // Preferences are an external boundary; unsupported imported values use the default.
-        c.volumeBackdropFps = fps == 10 || fps == 15 || fps == 30 || fps == 60
-                || fps == 90 || fps == 120 ? fps : 30;
+        c.volumeBackdropFps = CaptureRates.volumeOrDefault(
+                p.getInt("volume_backdrop_fps", CaptureRates.DEFAULT_VOLUME));
         c.headsUpGlassEnabled = p.getBoolean("heads_up_glass_enabled", true);
         c.menuBackdropEnabled = p.getBoolean("menu_backdrop_enabled", true);
-        int menuFps = p.getInt("menu_backdrop_fps", 1);
-        c.menuBackdropFps = menuFps == 1 || menuFps == 2 || menuFps == 5
-                || menuFps == 10 || menuFps == 15 || menuFps == 30
-                || menuFps == 60 || menuFps == 90 || menuFps == 120 ? menuFps : 1;
+        c.menuBackdropFps = CaptureRates.menuOrDefault(
+                p.getInt("menu_backdrop_fps", CaptureRates.DEFAULT_MENU));
         c.notificationAppBackdrop = p.getBoolean("notification_app_backdrop", false);
-        int notificationFps = p.getInt("notification_backdrop_fps", 5);
-        c.notificationBackdropFps = notificationFps == 1 || notificationFps == 2
-                || notificationFps == 5 || notificationFps == 10 || notificationFps == 15
-                || notificationFps == 30 ? notificationFps : 5;
+        c.notificationBackdropFps = CaptureRates.notificationOrDefault(
+                p.getInt("notification_backdrop_fps", CaptureRates.DEFAULT_NOTIFICATION));
         c.glassIntensity = p.getFloat("glass_intensity", 1f);
         c.blurRadius = p.getFloat("blur_radius", 0f);
         c.refractionHeight = p.getFloat("refraction_height", .2f);

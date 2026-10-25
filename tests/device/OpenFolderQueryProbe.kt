@@ -22,7 +22,7 @@ fun main(arguments: Array<String>) {
     val scannedFolder = Folder(context).apply { layout(0, 0, 128, 128) }
     workspace.addView(scannedFolder)
     // Deliberately conflicting legacy tree: proves that authoritative absence skips fallback.
-    val search = DesktopIconOverlay::class.java.getDeclaredMethod("findOpenFolderView", View::class.java)
+    val search = OpenFolderOverlay::class.java.getDeclaredMethod("findOpenFolderView", View::class.java)
         .apply { isAccessible = true }
     fun find(seed: View = workspace): View? = search.invoke(null, seed) as View?
     check(find() == null) { "Successful null still fell through to the View-tree scan" }

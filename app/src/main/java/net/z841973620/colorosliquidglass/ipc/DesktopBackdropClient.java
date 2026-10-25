@@ -91,12 +91,17 @@ public final class DesktopBackdropClient {
      * updating it via {@link #updateMenuRect} so Launcher tracks the real glass position.
      */
     public static void signalOpen(Rect menuOnScreen) {
+        trySignalOpen(menuOnScreen);
+    }
+
+    /** True only after a LIVE reference was actually acquired. */
+    public static boolean trySignalOpen(Rect menuOnScreen) {
         if (menuOnScreen == null || menuOnScreen.isEmpty()) {
             Log.w(TAG, "signalOpen ignored — empty menu rect");
-            return;
+            return false;
         }
         synchronized (LOCK) {
-            if (!ensureArenaLocked()) return;
+            if (!ensureArenaLocked()) return false;
             sessionRefs++;
             if (sessionRefs == 1) {
                 sessionCrop.set(menuOnScreen);
@@ -107,6 +112,7 @@ public final class DesktopBackdropClient {
             } else {
                 updateMenuRectLocked(menuOnScreen);
             }
+            return true;
         }
     }
 

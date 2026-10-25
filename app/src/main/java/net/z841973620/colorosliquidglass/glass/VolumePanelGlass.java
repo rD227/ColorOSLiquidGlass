@@ -22,6 +22,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -44,6 +45,9 @@ public final class VolumePanelGlass {
     private static final ColorDrawable TRANSPARENT = new ColorDrawable(Color.TRANSPARENT);
     private static final Set<View> INSTALLED =
             java.util.Collections.newSetFromMap(new WeakHashMap<>());
+    /** Main-thread callbacks owned by the dialog that requested them. */
+    private static final Map<Object, Runnable> PENDING_APPLIES = new IdentityHashMap<>();
+    private static final long[] APPLY_DELAYS_MS = {0L, 32L, 120L, 280L, 520L};
 
     private VolumePanelGlass() {}
 
@@ -89,6 +93,7 @@ public final class VolumePanelGlass {
     }
 
     public static void release(Object dialogView) {
+        cancelPendingApply(dialogView);
         ArrayList<View> hosts;
         synchronized (INSTALLED) {
             hosts = new ArrayList<>(INSTALLED);
@@ -418,18 +423,26 @@ public final class VolumePanelGlass {
 
     public static void schedule(Object dialogView, GlassConfig config) {
         if (dialogView == null || config == null || !config.enabled) return;
-        Runnable run = () -> {
-            try {
-                apply(dialogView, config);
-            } catch (Throwable t) {
-                Log.w(TAG, "volume glass apply failed", t);
+        cancelPendingApply(dialogView);
+        Runnable run = new Runnable() {
+            private int remaining = APPLY_DELAYS_MS.length;
+
+            @Override public void run() {
+                if (--remaining == 0) PENDING_APPLIES.remove(dialogView);
+                try {
+                    apply(dialogView, config);
+                } catch (Throwable t) {
+                    Log.w(TAG, "volume glass apply failed", t);
+                }
             }
         };
-        MAIN.post(run);
-        MAIN.postDelayed(run, 32L);
-        MAIN.postDelayed(run, 120L);
-        MAIN.postDelayed(run, 280L);
-        MAIN.postDelayed(run, 520L);
+        PENDING_APPLIES.put(dialogView, run);
+        for (long delay : APPLY_DELAYS_MS) MAIN.postDelayed(run, delay);
+    }
+
+    private static void cancelPendingApply(Object dialogView) {
+        Runnable pending = PENDING_APPLIES.remove(dialogView);
+        if (pending != null) MAIN.removeCallbacks(pending);
     }
 
     private static ViewGroup asViewGroup(Object o) {

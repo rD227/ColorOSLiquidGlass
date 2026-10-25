@@ -18,7 +18,7 @@ flowchart TD
 
 ## 桌面接入
 
-`ModuleMain` / `Os14HookBackend` 找到 OEM 的文件夹背景宿主，
+入口通过 `FolderPreviewHooks` / `LegacyFolderHooks` 找到 OEM 的文件夹背景宿主，
 通过 `GlassInstaller.installImage()` 或 `installBackground()` 安装。
 玻璃成为宿主的背景 Drawable，宿主原有图标继续由 ImageView/View 绘制。
 
@@ -28,7 +28,7 @@ flowchart TD
 
 ## 通知接入
 
-`ModuleMain.hookNotificationCardGlass()` 拦截系统
+`NotificationHooks.hookNotificationCardGlass()` 拦截系统
 `NotificationBackgroundView.onDraw(Canvas)`，把背景绘制交给 `NotificationCardGlass`。
 它不继承 NotificationBackgroundView，也不把通知的文字和图标替换成自己的 View。
 

@@ -13,6 +13,13 @@ Run from the repository root with one ADB device connected:
 ./tests/device/Run-Probes.ps1
 ```
 
+Without a connected device, use `./tests/device/Run-Probes.ps1 -CompileOnly` to compile
+the probes and produce their DEX without uploading or running them. This validates linkage,
+not runtime rendering. See [code structure](../../docs/code-structure.md) for module ownership.
+
+`VolumeLifecycleProbe` checks pending volume-apply cancellation/coalescing and LIVE reference
+ownership using a private arena in its own process. It does not switch real audio devices.
+
 The script uploads the APK as a classpath dependency under `/data/local/tmp`; it does not
 install/enable the module or restart Launcher/SystemUI. `SharedWallpaperProbe` exercises
 GPU RenderEffect output, production AGSL, source/radius/size cache invalidation, retained

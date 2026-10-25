@@ -58,13 +58,13 @@ fun main() {
     }
     val captures = BackdropCapture::class.java.getDeclaredField("CAPTURES")
         .apply { isAccessible = true }.get(null) as Map<*, *>
-    val oldRender = DesktopIconOverlay::class.java.getDeclaredMethod("hwFolderComposite",
+    val oldRender = FolderCompositeRenderer::class.java.getDeclaredMethod("hwFolderComposite",
         View::class.java, View::class.java, Int::class.javaPrimitiveType,
         Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType).apply { isAccessible = true }
-    val draw = DesktopIconOverlay::class.java.getDeclaredMethod("drawFolderComposite",
+    val draw = FolderCompositeRenderer::class.java.getDeclaredMethod("drawFolderComposite",
         View::class.java, View::class.java, Boolean::class.javaPrimitiveType, Canvas::class.java)
         .apply { isAccessible = true }
-    val retain = DesktopIconOverlay::class.java.getDeclaredMethod("retainFolderComposite",
+    val retain = FolderCompositeRenderer::class.java.getDeclaredMethod("retainFolderComposite",
         View::class.java, Bitmap::class.java, Bitmap::class.java, Boolean::class.javaPrimitiveType,
         Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
         Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType).apply { isAccessible = true }
@@ -151,7 +151,7 @@ fun main() {
     source.eraseColor(Color.BLUE)
     val changed = batched(1f)
     check(changed.getPixel(60, 60) != first!!.getPixel(60, 60)) { "Batch froze an old background" }
-    val retained = DesktopIconOverlay::class.java.getDeclaredField("FOLDER_SNAPS")
+    val retained = FolderCompositeRenderer::class.java.getDeclaredField("FOLDER_SNAPS")
         .apply { isAccessible = true }.get(null) as Map<*, *>
     for (folder in folders) {
         val entry = retained[folder]!!

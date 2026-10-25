@@ -9,8 +9,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -19,7 +17,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -37,8 +34,6 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.catalog.BackdropDemoScaffold
 import com.kyant.backdrop.catalog.Block
 import com.kyant.backdrop.catalog.components.LiquidButton
-import com.kyant.backdrop.catalog.components.LiquidSlider
-import com.kyant.backdrop.catalog.components.LiquidToggle
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
@@ -46,7 +41,8 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.RoundedRectangle
 import kotlinx.coroutines.launch
-import net.z841973620.colorosliquidglass.update.GitHubUpdateCard
+import net.z841973620.colorosliquidglass.settings.PlaygroundSettings
+import net.z841973620.colorosliquidglass.settings.PlaygroundSettingsState
 import net.z841973620.colorosliquidglass.update.GitHubUpdateDialog
 import net.z841973620.colorosliquidglass.update.GitHubReleaseChecker
 import kotlin.math.PI
@@ -68,53 +64,13 @@ fun GlassPlaygroundContent() {
 
     var isSheetExpanded by remember { mutableStateOf(true) }
     var availableUpdate by remember { mutableStateOf<GitHubReleaseChecker.ReleaseStatus?>(null) }
-    var enabled by remember { mutableStateOf(initial.enabled) }
-    var hideDesktopIcons by remember { mutableStateOf(initial.hideDesktopIcons) }
-    var modifyMenuStyle by remember { mutableStateOf(initial.modifyMenuStyle) }
-    var notificationGlassEnabled by remember { mutableStateOf(initial.notificationGlassEnabled) }
-    val backdropFpsOptions = remember { listOf(10, 15, 30, 60, 90, 120) }
-    var volumeBackdropFps by remember { mutableStateOf(initial.volumeBackdropFps) }
-    var headsUpGlassEnabled by remember { mutableStateOf(initial.headsUpGlassEnabled) }
-    var menuBackdropEnabled by remember { mutableStateOf(initial.menuBackdropEnabled) }
-    val menuBackdropFpsOptions = remember { listOf(1, 2, 5, 10, 15, 30, 60, 90, 120) }
-    var menuBackdropFps by remember { mutableStateOf(initial.menuBackdropFps) }
-    var notificationAppBackdrop by remember { mutableStateOf(initial.notificationAppBackdrop) }
-    val notificationFpsOptions = remember { listOf(1, 2, 5, 10, 15, 30) }
-    var notificationBackdropFps by remember { mutableStateOf(initial.notificationBackdropFps) }
-    var glassIntensity by remember { mutableFloatStateOf(initial.glassIntensity) }
-    var blurRadiusDp by remember { mutableFloatStateOf(initial.blurRadius) }
-    var refractionHeightFrac by remember { mutableFloatStateOf(initial.refractionHeight) }
-    var refractionAmountFrac by remember { mutableFloatStateOf(initial.refractionAmount) }
-    var chromaticAberration by remember { mutableFloatStateOf(initial.chromaticAberration) }
-    var reflectionIntensity by remember { mutableFloatStateOf(initial.reflectionIntensity) }
-    var highlightIntensity by remember { mutableFloatStateOf(initial.highlightIntensity) }
+    val settings = remember { PlaygroundSettingsState(initial) }
     var isRestarting by remember { mutableStateOf(false) }
-
-    fun currentConfig() = GlassConfig().also {
-        it.enabled = enabled
-        it.hideDesktopIcons = hideDesktopIcons
-        it.modifyMenuStyle = modifyMenuStyle
-        it.notificationGlassEnabled = notificationGlassEnabled
-        it.volumeBackdropFps = volumeBackdropFps
-        it.headsUpGlassEnabled = headsUpGlassEnabled
-        it.menuBackdropEnabled = menuBackdropEnabled
-        it.menuBackdropFps = menuBackdropFps
-        it.notificationAppBackdrop = notificationAppBackdrop
-        it.notificationBackdropFps = notificationBackdropFps
-        it.glassIntensity = glassIntensity
-        it.blurRadius = blurRadiusDp
-        it.refractionHeight = refractionHeightFrac
-        it.refractionAmount = refractionAmountFrac
-        it.chromaticAberration = chromaticAberration
-        it.transparency = 0f
-        it.reflectionIntensity = reflectionIntensity
-        it.highlightIntensity = highlightIntensity
-    }
 
     fun restartSystemComponents() {
         if (isRestarting) return
         isRestarting = true
-        RootController.saveAndRestart(context, currentConfig()) { success, message ->
+        RootController.saveAndRestart(context, settings.toConfig()) { success, message ->
             isRestarting = false
             Toast.makeText(context, message, if (success) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
         }
@@ -135,15 +91,15 @@ fun GlassPlaygroundContent() {
                     effects = {
                         val minDimension = size.minDimension
                         vibrancy()
-                        blur(blurRadiusDp.dp.toPx())
+                        blur(settings.blurRadiusDp.dp.toPx())
                         lens(
-                            refractionHeight = refractionHeightFrac * glassIntensity * minDimension * 0.5f,
-                            refractionAmount = refractionAmountFrac * glassIntensity * minDimension,
+                            refractionHeight = settings.refractionHeightFrac * settings.glassIntensity * minDimension * 0.5f,
+                            refractionAmount = settings.refractionAmountFrac * settings.glassIntensity * minDimension,
                             depthEffect = true,
-                            chromaticAberration = chromaticAberration > 0f
+                            chromaticAberration = settings.chromaticAberration > 0f
                         )
                     },
-                    highlight = { if (highlightIntensity > 0f && glassIntensity > 0f) Highlight.Plain else null },
+                    highlight = { if (settings.highlightIntensity > 0f && settings.glassIntensity > 0f) Highlight.Plain else null },
                     onDrawSurface = {
                         drawRect(Color.White.copy(alpha = 0.08f))
                     },
@@ -209,64 +165,7 @@ fun GlassPlaygroundContent() {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    PlaygroundToggle("启用修改", { enabled }, sheetBackdrop) { enabled = it }
-                    PlaygroundToggle("隐藏桌面图标", { hideDesktopIcons }, sheetBackdrop) {
-                        hideDesktopIcons = it
-                        LauncherIconController.applyHideDesktopIcons(context, it)
-                        RootController.saveConfig(context, currentConfig()) { _, _ -> }
-                    }
-                    PlaygroundToggle("修改菜单栏样式", { modifyMenuStyle }, sheetBackdrop) {
-                        modifyMenuStyle = it
-                        RootController.saveConfig(context, currentConfig()) { _, _ -> }
-                    }
-                    PlaygroundToggle("通知卡片与锁屏通知", { notificationGlassEnabled }, sheetBackdrop) {
-                        notificationGlassEnabled = it
-                        RootController.saveConfig(context, currentConfig()) { _, _ -> }
-                    }
-                    PlaygroundToggle("顶部悬浮通知玻璃", { headsUpGlassEnabled }, sheetBackdrop) {
-                        headsUpGlassEnabled = it
-                        RootController.saveConfig(context, currentConfig()) { _, _ -> }
-                    }
-                    PlaygroundToggle("通知卡片采样应用背景", { notificationAppBackdrop }, sheetBackdrop) {
-                        notificationAppBackdrop = it
-                        RootController.saveConfig(context, currentConfig()) { _, _ -> }
-                    }
-                    if (notificationAppBackdrop) {
-                        PlaygroundSlider("通知卡片背景更新：$notificationBackdropFps FPS",
-                            { notificationFpsOptions.indexOf(notificationBackdropFps).toFloat() },
-                            0f..5f, 0.01f, sheetBackdrop, steps = 4) {
-                            notificationBackdropFps = notificationFpsOptions[it.toInt()]
-                        }
-                    }
-                    BasicText("作用于下拉通知卡片和分组标题；关闭时使用壁纸 低帧率仅减少背景更新，滑动保持流畅 ")
-                    PlaygroundToggle("菜单采样背景", { menuBackdropEnabled }, sheetBackdrop) {
-                        menuBackdropEnabled = it
-                        RootController.saveConfig(context, currentConfig()) { _, _ -> }
-                    }
-                    if (menuBackdropEnabled) {
-                        PlaygroundSlider("桌面长按菜单静止采样：$menuBackdropFps Hz",
-                            { menuBackdropFpsOptions.indexOf(menuBackdropFps).toFloat() },
-                            0f..menuBackdropFpsOptions.lastIndex.toFloat(), 0.01f, sheetBackdrop,
-                            steps = menuBackdropFpsOptions.size - 2) {
-                            menuBackdropFps = menuBackdropFpsOptions[it.toInt()]
-                        }
-                        BasicText("静止时减少背景采样；打开、关闭和几何变化仍及时更新。保存后重启系统组件生效")
-                    }
-                    BasicText("关闭悬浮通知玻璃使用系统原样式；关闭菜单背景采样保留简单玻璃外观....保存后重启生效")
-                    PlaygroundSlider("液态玻璃强度", { glassIntensity }, 0f..1f, 0.001f, sheetBackdrop) { glassIntensity = it }
-                    PlaygroundSlider("模糊半径", { blurRadiusDp }, 0f..32f, 0.01f, sheetBackdrop) { blurRadiusDp = it }
-                    PlaygroundSlider("音量条/悬浮通知背景更新：$volumeBackdropFps FPS",
-                        { backdropFpsOptions.indexOf(volumeBackdropFps).toFloat() },
-                        0f..5f, 0.01f, sheetBackdrop, steps = 4) {
-                        volumeBackdropFps = backdropFpsOptions[it.toInt()]
-                    }
-                    BasicText("只调整背景更新频率；低帧率更省资源，快速画面可能稍有滞后....保存后重启系统组件生效")
-                    PlaygroundSlider("折射高度", { refractionHeightFrac }, 0f..1f, 0.001f, sheetBackdrop) { refractionHeightFrac = it }
-                    PlaygroundSlider("扭曲强度", { refractionAmountFrac }, 0f..1f, 0.001f, sheetBackdrop) { refractionAmountFrac = it }
-                    PlaygroundSlider("反射", { reflectionIntensity }, 0f..1f, 0.001f, sheetBackdrop) { reflectionIntensity = it }
-                    PlaygroundSlider("高光", { highlightIntensity }, 0f..1f, 0.001f, sheetBackdrop) { highlightIntensity = it }
-                    PlaygroundSlider("色差", { chromaticAberration }, 0f..1f, 0.001f, sheetBackdrop) { chromaticAberration = it }
-                    GitHubUpdateCard(sheetBackdrop) { availableUpdate = it }
+                    PlaygroundSettings(settings, sheetBackdrop) { availableUpdate = it }
                 }
             }
         }
@@ -285,13 +184,7 @@ fun GlassPlaygroundContent() {
                         launch { zoomAnimation.animateTo(1f) }
                         launch { rotationAnimation.animateTo(0f) }
                     }
-                    glassIntensity = 1f
-                    blurRadiusDp = 0f
-                    refractionHeightFrac = 0.2f
-                    refractionAmountFrac = 0.2f
-                    chromaticAberration = 0f
-                    reflectionIntensity = 1f
-                    highlightIntensity = 1f
+                    settings.resetAppearance()
                 }, backdrop,
                 Modifier.padding(20.dp).navigationBarsPadding().align(Alignment.BottomEnd),
                 tint = Color(0xFFFF8D28)
@@ -312,38 +205,5 @@ fun GlassPlaygroundContent() {
                 style = TextStyle(Color.White, 14.sp)
             )
         }
-    }
-}
-
-@Composable
-private fun PlaygroundToggle(
-    label: String,
-    selected: () -> Boolean,
-    backdrop: com.kyant.backdrop.Backdrop,
-    onSelect: (Boolean) -> Unit
-) {
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        BasicText(label)
-        LiquidToggle(selected = selected, onSelect = onSelect, backdrop = backdrop)
-    }
-}
-
-@Composable
-private fun PlaygroundSlider(
-    label: String,
-    value: () -> Float,
-    range: ClosedFloatingPointRange<Float>,
-    threshold: Float,
-    backdrop: com.kyant.backdrop.Backdrop,
-    steps: Int = 0,
-    onChange: (Float) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        BasicText(label)
-        LiquidSlider(value, onChange, range, threshold, backdrop, steps = steps)
     }
 }
